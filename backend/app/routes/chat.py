@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from app.models.schemas import ChatRequest, ChatResponse, StartResponse, AircraftSuggestion, AircraftPricing, LeadState
 from app.services.concierge import concierge_service
 from app.services.extractor import extractor_service
@@ -6,6 +6,8 @@ from app.services.lead_manager import lead_manager
 from app.services.aircraft import aircraft_service
 from app.services.intent_detector import intent_detector
 from app.services.email_service import email_service
+from app.auth import get_current_user_optional, get_current_user_required
+from typing import Optional, List
 import re
 
 router = APIRouter()
@@ -92,7 +94,10 @@ async def start_conversation():
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+    authorization: Optional[str] = Header(None)
+):
     """
     Process a user message and return concierge response.
     Extracts entities, updates lead state, and generates natural reply.
@@ -103,6 +108,8 @@ async def chat(request: ChatRequest):
     
     Booking confirmation triggers:
     - When user says "go ahead", "proceed", "book it", etc.
+    - If user is authenticated: lead is associated with user and confirmed
+    - If user is NOT authenticated: returns requires_auth flag
     - Email is sent to operators
     - Lead status changes from "draft" to "confirmed"
     """
@@ -110,6 +117,10 @@ async def chat(request: ChatRequest):
         session_id = request.session_id
         user_message = request.message
         booking_confirmed = False
+        requires_auth = False
+        
+        # Get current user (optional - doesn't fail if not authenticated)
+        current_user = get_current_user_optional(authorization)
 
         # Save user message
         lead_manager.save_message(session_id, "user", user_message)
@@ -147,29 +158,69 @@ async def chat(request: ChatRequest):
 
         # Detect booking intent
         wants_to_book = intent_detector.detect_booking_intent(user_message)
+        
+        # Get current submission state
+        current_submission_state = current_lead.submission_state or "collecting"
 
-        # Handle booking confirmation
+        # Handle booking submission flow with hard state gates
         if wants_to_book and not was_already_confirmed:
-            # Confirm the booking
-            current_lead = lead_manager.confirm_booking(session_id)
-            booking_confirmed = True
+            # CRITICAL: Check submission state to prevent unauthorized confirmation
+            if current_submission_state == "collecting":
+                # User wants to proceed - set state to awaiting_auth
+                if not current_user:
+                    # User not authenticated - require auth
+                    current_lead = lead_manager.set_submission_state(session_id, "awaiting_auth")
+                    requires_auth = True
+                    print(f"🔒 Submission state set to 'awaiting_auth' - auth required")
+                else:
+                    # User is authenticated - can proceed directly to confirmation
+                    user_id = current_user["id"]
+                    current_lead = lead_manager.confirm_booking(session_id, user_id=user_id)
+                    booking_confirmed = True
+                    print(f"✅ BOOKING CONFIRMED for session {session_id}")
+                    print(f"   User: {user_id}")
+                    print(f"   Client: {current_lead.name or 'Unknown'}")
+                    print(f"   Route: {current_lead.route_from} → {current_lead.route_to}")
+                    print(f"   Aircraft: {current_lead.selected_aircraft or 'Not selected'}")
+                    
+                    # Send email notification
+                    try:
+                        email_service.send_booking_notification_background(
+                            lead=current_lead,
+                            session_id=session_id,
+                            selected_aircraft=current_lead.selected_aircraft,
+                        )
+                    except Exception as email_err:
+                        print(f"⚠️  Email queue failed (non-fatal): {email_err}")
             
-            print(f"✅ BOOKING CONFIRMED for session {session_id}")
-            print(f"   Client: {current_lead.name or 'Unknown'}")
-            print(f"   Route: {current_lead.route_from} → {current_lead.route_to}")
-            print(f"   Aircraft: {current_lead.selected_aircraft or 'Not selected'}")
+            elif current_submission_state == "awaiting_auth":
+                # Already in awaiting_auth state - check if user just authenticated
+                if current_user:
+                    # User is now authenticated - confirm booking
+                    user_id = current_user["id"]
+                    current_lead = lead_manager.confirm_booking(session_id, user_id=user_id)
+                    booking_confirmed = True
+                    print(f"✅ BOOKING CONFIRMED after auth for session {session_id}")
+                    print(f"   User: {user_id}")
+                    
+                    # Send email notification
+                    try:
+                        email_service.send_booking_notification_background(
+                            lead=current_lead,
+                            session_id=session_id,
+                            selected_aircraft=current_lead.selected_aircraft,
+                        )
+                    except Exception as email_err:
+                        print(f"⚠️  Email queue failed (non-fatal): {email_err}")
+                else:
+                    # Still not authenticated - keep requiring auth
+                    requires_auth = True
+                    print(f"🔒 Still awaiting authentication for session {session_id}")
             
-            # Send email notification to operators (background with retries)
-            # This returns immediately - emails are sent asynchronously
-            try:
-                email_service.send_booking_notification_background(
-                    lead=current_lead,
-                    session_id=session_id,
-                    selected_aircraft=current_lead.selected_aircraft,
-                )
-            except Exception as email_err:
-                print(f"⚠️  Email queue failed (non-fatal): {email_err}")
-                # Don't fail the request if email fails
+            elif current_submission_state == "confirmed":
+                # Already confirmed - do nothing (prevent duplicate confirmations)
+                booking_confirmed = True
+                print(f"ℹ️  Booking already confirmed for session {session_id}")
 
         # Determine if we should show aircraft
         # Case 1: Pax was just extracted (user didn't explicitly ask)
@@ -228,12 +279,21 @@ async def chat(request: ChatRequest):
             print(f"LLM error: {llm_err}")
             response_message = None
 
-        # Ensure we always have a response
-        if not response_message or not response_message.strip():
-            if booking_confirmed:
-                response_message = "Perfect! I've placed the booking request. Our team will reach out to you shortly to finalize the details. Is there anything else I can help you with?"
-            else:
-                response_message = "I'd be happy to help with that. Could you tell me more about your flight requirements?"
+        # Override response message based on submission state
+        # CRITICAL: Never use confirmation language unless booking is actually confirmed
+        if requires_auth:
+            # User needs to authenticate - use gentle, non-committal language
+            response_message = "To proceed with your booking, please sign in or create an account. This will allow us to securely process your request and keep you updated."
+        elif booking_confirmed:
+            # Booking is confirmed - safe to use confirmation language
+            response_message = "Perfect! I've placed the booking request. Our team will reach out to you shortly to finalize the details. Is there anything else I can help you with?"
+        elif current_submission_state == "awaiting_auth":
+            # Waiting for auth - gentle reminder without confirmation language
+            if not response_message or not response_message.strip():
+                response_message = "I'm ready to proceed whenever you are. Just let me know when you'd like to continue, and I'll take care of everything."
+        elif not response_message or not response_message.strip():
+            # Default fallback
+            response_message = "I'd be happy to help with that. Could you tell me more about your flight requirements?"
 
         # Save assistant response
         lead_manager.save_message(session_id, "assistant", response_message)
@@ -245,10 +305,57 @@ async def chat(request: ChatRequest):
             show_aircraft=show_aircraft,
             aircraft=aircraft_list,
             booking_confirmed=booking_confirmed,
+            requires_auth=requires_auth,
         )
 
     except Exception as e:
         print(f"Error in /chat: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/my-bookings")
+async def get_my_bookings(
+    authorization: str = Header(...)
+):
+    """
+    Get all bookings for the authenticated user.
+    Requires authentication.
+    Returns list of leads sorted by created_at DESC.
+    """
+    try:
+        # Get current user (required - will raise 401 if not authenticated)
+        current_user = get_current_user_required(authorization)
+        user_id = current_user["id"]
+        
+        # Get user's leads
+        leads = lead_manager.get_user_leads(user_id)
+        
+        # Format response (only include relevant fields)
+        bookings = []
+        for lead in leads:
+            bookings.append({
+                "session_id": lead.get("session_id"),
+                "name": lead.get("name"),
+                "email": lead.get("email"),
+                "date_time": lead.get("date_time"),
+                "route_from": lead.get("route_from"),
+                "route_to": lead.get("route_to"),
+                "pax": lead.get("pax"),
+                "selected_aircraft": lead.get("selected_aircraft"),
+                "status": lead.get("status", "draft"),
+                "created_at": lead.get("created_at"),
+                "updated_at": lead.get("updated_at"),
+            })
+        
+        return {"bookings": bookings}
+    
+    except HTTPException:
+        # Re-raise auth errors
+        raise
+    except Exception as e:
+        print(f"Error in /my-bookings: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

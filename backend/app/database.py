@@ -9,7 +9,8 @@ class SupabaseClient:
 
     def __init__(self):
         self.url = settings.SUPABASE_URL
-        self.key = settings.SUPABASE_KEY
+        # Use service role key if available (bypasses RLS), otherwise fall back to anon key
+        self.key = settings.SUPABASE_SERVICE_KEY or settings.SUPABASE_KEY
         self.rest_url = f"{self.url}/rest/v1" if self.url else ""
         self.headers = {
             "apikey": self.key,
@@ -202,6 +203,7 @@ class MockTableQuery:
                 session_id = data.get("session_id")
                 self.db.leads[session_id] = {
                     "session_id": session_id,
+                    "user_id": data.get("user_id"),  # Support user_id
                     "name": None,
                     "email": None,
                     "date_time": None,
@@ -211,6 +213,9 @@ class MockTableQuery:
                     "special_requests": [],
                     "selected_aircraft": None,
                     "status": "draft",  # Always default to draft
+                    "submission_state": "collecting",  # Default submission state
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat(),
                 }
                 return QueryResult([self.db.leads[session_id]])
             elif self.table_name == "conversations":
@@ -234,11 +239,29 @@ class MockTableQuery:
         # Handle select query
         if self.table_name == "leads":
             session_id = self._filters.get("session_id")
-            if session_id and session_id in self.db.leads:
-                data = self.db.leads[session_id]
+            user_id = self._filters.get("user_id")
+            
+            if session_id:
+                # Single lead lookup by session_id
+                if session_id in self.db.leads:
+                    data = self.db.leads[session_id]
+                else:
+                    data = None
+                return QueryResult(data)
+            elif user_id:
+                # Multiple leads filtered by user_id
+                data = [
+                    lead for lead in self.db.leads.values()
+                    if lead.get("user_id") == user_id
+                ]
+                # Apply ordering if specified
+                if self._order_col:
+                    col, desc = self._order_col
+                    data.sort(key=lambda x: x.get(col, ""), reverse=desc)
+                return QueryResult(data)
             else:
-                data = None
-            return QueryResult(data)
+                # No filters - return empty (not supported in mock)
+                return QueryResult([])
         elif self.table_name == "conversations":
             session_id = self._filters.get("session_id")
             data = [c for c in self.db.conversations if c.get("session_id") == session_id]

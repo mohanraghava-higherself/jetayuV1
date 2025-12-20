@@ -44,7 +44,10 @@ Jetayu is NOT a booking engine. It's a conversational lead capture system design
 
 1. Create a new Supabase project
 2. Run the schema in `database/schema.sql` via the SQL Editor
-3. Copy your project URL and anon key
+3. Run `database/migration_v1.1.sql` (if not already included in schema.sql)
+4. Run `database/migration_v1.2_auth.sql` to add authentication support
+5. Copy your project URL, anon key, and JWT secret
+6. Enable Google and Apple OAuth providers in Supabase Dashboard (Authentication > Providers) if needed
 
 ### 2. Backend Setup
 
@@ -72,6 +75,7 @@ Configure `.env`:
 ```env
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_KEY=your-supabase-anon-key
+SUPABASE_JWT_SECRET=your-supabase-jwt-secret
 OPENAI_API_KEY=your-openai-api-key
 
 # Optional: Email notifications for booking confirmations
@@ -82,6 +86,8 @@ SMTP_PASSWORD=your-app-password
 FROM_EMAIL=concierge@jetayu.com
 OPERATOR_EMAILS=operator1@yourcompany.com,operator2@yourcompany.com
 ```
+
+> **JWT Secret:** Find this in Supabase Dashboard > Project Settings > API > JWT Secret. Required for token verification in production.
 
 > **Email Setup:** If email is not configured, booking notifications are logged to console instead.
 
@@ -98,8 +104,19 @@ cd frontend
 # Install dependencies
 npm install
 
+# Create .env file
+copy env.example .env
+# Edit .env with your Supabase credentials
+
 # Start dev server
 npm run dev
+```
+
+Configure `frontend/.env`:
+```env
+VITE_API_URL=http://localhost:8000
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
 ```
 
 Open http://localhost:5173
@@ -245,6 +262,77 @@ Aircraft cards appear when:
 
 Aircraft data (with pricing) is managed entirely in the backend.
 
+## Authentication & User Profiles
+
+### Authentication Flow
+
+Jetayu supports **optional authentication** - users can chat anonymously, but authentication is required when confirming a booking.
+
+**Key Features:**
+- **Anonymous Chat:** Users can start conversations without logging in
+- **Auth on Booking:** Authentication is prompted only when user wants to proceed with booking
+- **Multiple Auth Methods:** Email/password, Google OAuth, Apple OAuth
+- **User Profiles:** Minimal profile extension over Supabase auth.users
+- **My Bookings:** Authenticated users can view their booking history
+
+### Auth Flow
+
+1. **Anonymous Conversation:**
+   - User starts chat without authentication
+   - All lead data is captured in `leads` table with `user_id = NULL`
+   - Chat works exactly as before
+
+2. **Booking Confirmation:**
+   - When user says "go ahead", "book it", etc.
+   - If not authenticated → `auth_required: true` in response
+   - Frontend shows auth modal
+   - After login → booking is confirmed and associated with user
+
+3. **User Association:**
+   - After authentication, `user_id` is set on the lead
+   - Lead is linked to user's profile
+   - User can view booking in "My Bookings"
+
+### Database Schema
+
+**Profiles Table:**
+- `id` (UUID, FK → auth.users.id)
+- `email` (text)
+- `full_name` (text, nullable)
+- `created_at`, `updated_at` (timestamps)
+
+**Leads Table (Modified):**
+- Added `user_id` (UUID, nullable, FK → profiles.id)
+- Indexed for efficient user queries
+- `user_id = NULL` for anonymous leads
+
+### Row Level Security (RLS)
+
+- **Profiles:** Users can read/write only their own profile
+- **Leads:** 
+  - Anonymous users: No read access (backend service role handles writes)
+  - Authenticated users: Read only their own leads (`user_id = auth.uid()`)
+  - Backend service role: Full access (for `/start` and `/chat` endpoints)
+
+### API Endpoints
+
+**`POST /chat`** (Updated):
+- Optional `Authorization` header
+- If booking requires auth and user not authenticated → returns `auth_required: true`
+- If authenticated → associates lead with user on confirmation
+
+**`GET /my-bookings`** (New):
+- Requires authentication (`Authorization: Bearer <token>`)
+- Returns user's leads sorted by `created_at DESC`
+- Read-only view of booking history
+
+### Frontend Auth Components
+
+- **LandingPage:** Entry point with "Start Conversation" and "My Bookings" CTAs
+- **AuthModal:** Email/password, Google, Apple OAuth
+- **MyBookings:** Read-only list of user's bookings
+- **App.jsx:** Handles routing and auth state management
+
 ## Customization
 
 ### Conversation Tone
@@ -261,8 +349,10 @@ Modify `frontend/tailwind.config.js` colors and `frontend/src/index.css` for sty
 - **Mock Mode:** Frontend works standalone with fallback responses; backend falls back to in-memory mock database if Supabase not configured
 - **Aircraft Flow:** Jet suggestions appear after pax is captured OR when user asks about aircraft
 - **Booking Flow:** When user says "go ahead", "book it", etc., lead status changes to "confirmed" and operators are notified
+- **Auth Flow:** Authentication is optional for chat, required only for booking confirmation
 - **Email:** If SMTP not configured, booking notifications are logged to console
-- Session data persists in Supabase across page refreshes (if same session_id used)
+- **Session Persistence:** Session data persists in Supabase across page refreshes (if same session_id used)
+- **OAuth Setup:** Configure Google and Apple OAuth in Supabase Dashboard > Authentication > Providers
 
 ## License
 

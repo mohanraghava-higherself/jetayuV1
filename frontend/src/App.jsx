@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { AnimatePresence } from 'framer-motion'
+import { supabase, isSupabaseConfigured } from './lib/supabase'
+import LandingPage from './components/LandingPage'
+import AuthModal from './components/AuthModal'
+import MyBookings from './components/MyBookings'
 import Header from './components/Header'
 import ChatMessage from './components/ChatMessage'
 import ChatInput from './components/ChatInput'
@@ -12,28 +16,89 @@ const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}` 
   : '/api'
 
+// Views: 'landing' | 'chat' | 'bookings'
 export default function App() {
+  const [view, setView] = useState('landing')
+  const [user, setUser] = useState(null)
+  const [showAuthModal, setShowAuthModal] = useState(false)
+  const [pendingBookingSessionId, setPendingBookingSessionId] = useState(null)
+  
+  // Chat state
   const [sessionId, setSessionId] = useState(null)
   const [messages, setMessages] = useState([])
   const [isLoading, setIsLoading] = useState(false)
   const [showJets, setShowJets] = useState(false)
-  const [aircraft, setAircraft] = useState([])  // Aircraft from backend
+  const [aircraft, setAircraft] = useState([])
   const [leadState, setLeadState] = useState(null)
   const [bookingConfirmed, setBookingConfirmed] = useState(false)
   const messagesEndRef = useRef(null)
   const hasInitialized = useRef(false)
+
+  // Initialize auth state
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null)
+    })
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+      
+      // If user just logged in and there's a pending booking, retry it
+      if (session?.user && pendingBookingSessionId) {
+        retryBookingConfirmation(pendingBookingSessionId)
+        setPendingBookingSessionId(null)
+      }
+    })
+
+    return () => subscription.unsubscribe()
+  }, [pendingBookingSessionId])
 
   // Scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isLoading, showJets])
 
-  // Initialize session on mount
-  useEffect(() => {
-    if (hasInitialized.current) return
-    hasInitialized.current = true
-    startSession()
-  }, [])
+  const handleStartChat = () => {
+    setView('chat')
+    if (!hasInitialized.current) {
+      hasInitialized.current = true
+      startSession()
+    }
+  }
+
+  const handleMyBookings = () => {
+    if (!user) {
+      setShowAuthModal(true)
+      return
+    }
+    setView('bookings')
+  }
+
+  const handleAuthSuccess = async () => {
+    setShowAuthModal(false)
+    // If there's a pending booking, retry it after auth success
+    if (pendingBookingSessionId) {
+      // Resend the last user message to trigger confirmation with auth
+      const lastUserMessage = messages.filter(m => m.role === 'user').pop()
+      if (lastUserMessage) {
+        // Small delay to ensure auth state is updated
+        setTimeout(() => {
+          sendMessage(lastUserMessage.content)
+        }, 500)
+      }
+      setPendingBookingSessionId(null)
+    }
+  }
+
+  const handleAuthClose = () => {
+    // User closed auth modal without authenticating
+    // Clear pending booking - submission will remain in 'awaiting_auth' state
+    setPendingBookingSessionId(null)
+    setShowAuthModal(false)
+    // Don't send any confirmation message - backend will handle the state
+  }
 
   const startSession = async () => {
     setIsLoading(true)
@@ -53,7 +118,6 @@ export default function App() {
       }])
     } catch (error) {
       console.error('Failed to start session:', error)
-      // Fallback greeting for demo/development
       setMessages([{
         id: Date.now(),
         role: 'assistant',
@@ -66,10 +130,8 @@ export default function App() {
   }
 
   const sendMessage = async (content) => {
-    // Hide jets when sending a new message
     setShowJets(false)
     
-    // Add user message
     const userMessage = {
       id: Date.now(),
       role: 'user',
@@ -79,7 +141,6 @@ export default function App() {
     setMessages(prev => [...prev.map(m => ({ ...m, isNew: false })), userMessage])
     setIsLoading(true)
 
-    // If no session, try to start one first
     let currentSessionId = sessionId
     if (!currentSessionId) {
       try {
@@ -96,9 +157,18 @@ export default function App() {
     }
 
     try {
+      // Get auth token if user is logged in
+      const { data: { session } } = await supabase.auth.getSession()
+      const headers = {
+        'Content-Type': 'application/json',
+      }
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`
+      }
+
       const response = await fetch(`${API_BASE}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           session_id: currentSessionId,
           message: content,
@@ -106,7 +176,6 @@ export default function App() {
       })
       const data = await response.json()
 
-      // Add assistant response
       setMessages(prev => [
         ...prev.map(m => ({ ...m, isNew: false })),
         {
@@ -117,25 +186,25 @@ export default function App() {
         }
       ])
 
-      // Update lead state
       setLeadState(data.lead_state)
 
-      // Show aircraft if backend says so
       if (data.show_aircraft && data.aircraft && data.aircraft.length > 0) {
         setAircraft(data.aircraft)
-        // Small delay for smooth animation after message appears
         setTimeout(() => setShowJets(true), 800)
       }
 
-      // Handle booking confirmation
+      // Handle auth requirement for booking
+      if (data.requires_auth) {
+        setPendingBookingSessionId(currentSessionId)
+        setShowAuthModal(true)
+      }
+
       if (data.booking_confirmed) {
         setBookingConfirmed(true)
-        // Hide confirmation after a few seconds
         setTimeout(() => setBookingConfirmed(false), 5000)
       }
     } catch (error) {
       console.error('Failed to send message:', error)
-      // Fallback response for demo
       setMessages(prev => [
         ...prev.map(m => ({ ...m, isNew: false })),
         {
@@ -150,63 +219,105 @@ export default function App() {
     }
   }
 
+  const retryBookingConfirmation = async (sessionIdToRetry) => {
+    // Resend the last message that triggered booking confirmation
+    const lastUserMessage = messages.filter(m => m.role === 'user').pop()
+    if (lastUserMessage) {
+      await sendMessage(lastUserMessage.content)
+    }
+  }
+
   const handleJetSelect = (message) => {
     sendMessage(message)
     setShowJets(false)
   }
 
+  // Render based on current view
+  if (view === 'landing') {
+    return (
+      <>
+        <LandingPage 
+          onStartChat={handleStartChat}
+          onMyBookings={handleMyBookings}
+        />
+        <AuthModal
+          isOpen={showAuthModal}
+          onClose={handleAuthClose}
+          onSuccess={handleAuthSuccess}
+        />
+      </>
+    )
+  }
+
+  if (view === 'bookings') {
+    return (
+      <>
+        <MyBookings onBack={() => setView('landing')} />
+        <AuthModal
+          isOpen={showAuthModal}
+          onClose={handleAuthClose}
+          onSuccess={handleAuthSuccess}
+        />
+      </>
+    )
+  }
+
+  // Chat view
   return (
-    <div className="h-full flex flex-col bg-gradient-luxury">
-      <Header />
-      
-      {/* Chat Container */}
-      <main className="flex-1 overflow-y-auto hide-scrollbar">
-        <div className="max-w-3xl mx-auto px-4 py-6">
-          {/* Background decoration */}
-          <div className="fixed inset-0 pointer-events-none overflow-hidden">
-            <div className="absolute top-1/4 -left-1/4 w-96 h-96 bg-gold-500/5 rounded-full blur-3xl" />
-            <div className="absolute bottom-1/4 -right-1/4 w-96 h-96 bg-gold-500/3 rounded-full blur-3xl" />
+    <>
+      <div className="h-full flex flex-col bg-gradient-luxury">
+        <Header 
+          user={user}
+          onAuthClick={() => setShowAuthModal(true)}
+          onMyBookings={handleMyBookings}
+        />
+        
+        <main className="flex-1 overflow-y-auto hide-scrollbar">
+          <div className="max-w-3xl mx-auto px-4 py-6">
+            <div className="fixed inset-0 pointer-events-none overflow-hidden">
+              <div className="absolute top-1/4 -left-1/4 w-96 h-96 bg-gold-500/5 rounded-full blur-3xl" />
+              <div className="absolute bottom-1/4 -right-1/4 w-96 h-96 bg-gold-500/3 rounded-full blur-3xl" />
+            </div>
+
+            <div className="relative z-10 space-y-2">
+              <AnimatePresence mode="popLayout">
+                {messages.map((message) => (
+                  <ChatMessage
+                    key={message.id}
+                    message={message.content}
+                    isUser={message.role === 'user'}
+                    isNew={message.isNew}
+                  />
+                ))}
+              </AnimatePresence>
+
+              <AnimatePresence>
+                {isLoading && <TypingIndicator />}
+              </AnimatePresence>
+
+              <AnimatePresence>
+                {bookingConfirmed && <BookingConfirmed />}
+              </AnimatePresence>
+
+              <AnimatePresence>
+                {showJets && !isLoading && aircraft.length > 0 && (
+                  <JetSuggestions aircraft={aircraft} onSelect={handleJetSelect} />
+                )}
+              </AnimatePresence>
+            </div>
+
+            <div ref={messagesEndRef} className="h-4" />
           </div>
+        </main>
 
-          {/* Messages */}
-          <div className="relative z-10 space-y-2">
-            <AnimatePresence mode="popLayout">
-              {messages.map((message) => (
-                <ChatMessage
-                  key={message.id}
-                  message={message.content}
-                  isUser={message.role === 'user'}
-                  isNew={message.isNew}
-                />
-              ))}
-            </AnimatePresence>
+        <ChatInput onSend={sendMessage} disabled={isLoading} />
+      </div>
 
-            {/* Typing indicator */}
-            <AnimatePresence>
-              {isLoading && <TypingIndicator />}
-            </AnimatePresence>
-
-            {/* Booking confirmation banner */}
-            <AnimatePresence>
-              {bookingConfirmed && <BookingConfirmed />}
-            </AnimatePresence>
-
-            {/* Jet suggestions - now from backend */}
-            <AnimatePresence>
-              {showJets && !isLoading && aircraft.length > 0 && (
-                <JetSuggestions aircraft={aircraft} onSelect={handleJetSelect} />
-              )}
-            </AnimatePresence>
-          </div>
-
-          {/* Scroll anchor */}
-          <div ref={messagesEndRef} className="h-4" />
-        </div>
-      </main>
-
-      {/* Input */}
-      <ChatInput onSend={sendMessage} disabled={isLoading} />
-    </div>
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onSuccess={handleAuthSuccess}
+      />
+    </>
   )
 }
-

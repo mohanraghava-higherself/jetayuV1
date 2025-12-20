@@ -1,6 +1,11 @@
 import { motion } from 'framer-motion'
+import { supabase } from '../lib/supabase'
 
-export default function Header() {
+export default function Header({ user, onAuthClick, onMyBookings }) {
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+  }
+
   return (
     <header className="glass border-b border-jet-800/50 sticky top-0 z-50">
       <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
@@ -29,13 +34,51 @@ export default function Header() {
           </div>
         </motion.div>
 
-        {/* Status indicator */}
-        <div className="flex items-center gap-2">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-          </span>
-          <span className="text-xs text-jet-500">Online</span>
+        {/* Right side: Auth buttons or user info */}
+        <div className="flex items-center gap-3">
+          {/* Status indicator */}
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span className="text-xs text-jet-500 hidden sm:inline">Online</span>
+          </div>
+
+          {/* Auth buttons */}
+          {user ? (
+            <div className="flex items-center gap-2">
+              {onMyBookings && (
+                <button
+                  onClick={onMyBookings}
+                  className="text-xs text-jet-400 hover:text-jet-200 transition-colors px-2 py-1 hidden sm:block"
+                >
+                  My Bookings
+                </button>
+              )}
+              <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-jet-800/50 border border-jet-700/50">
+                <div className="w-6 h-6 rounded-full bg-gold-500/20 flex items-center justify-center">
+                  <span className="text-[10px] text-gold-400 font-medium">
+                    {user.email?.charAt(0).toUpperCase() || 'U'}
+                  </span>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="text-xs text-jet-400 hover:text-jet-200 transition-colors"
+                  title="Sign out"
+                >
+                  Sign Out
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={onAuthClick}
+              className="text-xs font-medium text-jet-100 hover:text-jet-50 transition-colors px-4 py-2 rounded-lg border border-gold-500/30 hover:border-gold-500/50 bg-gold-500/10 hover:bg-gold-500/20 backdrop-blur-sm"
+            >
+              Sign In
+            </button>
+          )}
         </div>
       </div>
     </header>

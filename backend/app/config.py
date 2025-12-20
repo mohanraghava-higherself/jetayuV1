@@ -7,7 +7,8 @@ load_dotenv()
 class Settings:
     # Supabase
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
-    SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
+    SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")  # Anon key for frontend
+    SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")  # Service role key for backend (bypasses RLS)
 
     # LLM
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")

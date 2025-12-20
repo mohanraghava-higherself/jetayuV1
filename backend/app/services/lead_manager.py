@@ -58,11 +58,12 @@ class LeadManager:
                     special_requests=result.data.get("special_requests") or [],
                     selected_aircraft=result.data.get("selected_aircraft"),
                     status=result.data.get("status") or "draft",
+                    submission_state=result.data.get("submission_state") or "collecting",
                 )
         except Exception as e:
             print(f"⚠️  Error fetching lead: {e}")
 
-        return LeadState()
+        return LeadState(submission_state="collecting")
 
     def update_lead(self, session_id: str, updates: LeadState) -> LeadState:
         """
@@ -117,18 +118,68 @@ class LeadManager:
 
         return self.get_lead(session_id)
 
-    def confirm_booking(self, session_id: str) -> LeadState:
+    def associate_user(self, session_id: str, user_id: str) -> LeadState:
         """
-        Mark the lead as confirmed (user wants to proceed with booking).
-        This should trigger email notification to operators.
+        Associate a lead with a user account.
+        Called after user logs in during booking confirmation.
         """
         try:
             self.db.table("leads").update({
-                "status": "confirmed"
+                "user_id": user_id
             }).eq("session_id", session_id).execute()
         except Exception as e:
-            # Column might not exist in old schema - log but don't fail
-            print(f"⚠️  Could not update status (column may not exist): {e}")
+            print(f"⚠️  Could not associate user (column may not exist): {e}")
+        
+        return self.get_lead(session_id)
+
+    def set_submission_state(self, session_id: str, state: str) -> LeadState:
+        """
+        Set the submission state for a lead.
+        States: 'collecting', 'awaiting_auth', 'confirmed'
+        """
+        if state not in ['collecting', 'awaiting_auth', 'confirmed']:
+            raise ValueError(f"Invalid submission_state: {state}")
+        
+        try:
+            self.db.table("leads").update({
+                "submission_state": state
+            }).eq("session_id", session_id).execute()
+        except Exception as e:
+            print(f"⚠️  Could not update submission_state: {e}")
+        
+        return self.get_lead(session_id)
+
+    def confirm_booking(self, session_id: str, user_id: Optional[str] = None) -> LeadState:
+        """
+        Mark the lead as confirmed (user wants to proceed with booking).
+        ONLY works if submission_state is 'awaiting_auth' and user_id is provided.
+        This ensures booking can only be confirmed after successful authentication.
+        """
+        # Get current lead to check submission_state
+        current_lead = self.get_lead(session_id)
+        
+        # CRITICAL: Only confirm if submission_state is 'awaiting_auth'
+        # This prevents confirmation without proper auth flow
+        if current_lead.submission_state != 'awaiting_auth':
+            print(f"⚠️  Cannot confirm booking: submission_state is '{current_lead.submission_state}', expected 'awaiting_auth'")
+            return current_lead
+        
+        # CRITICAL: Require user_id (authentication)
+        if not user_id:
+            print(f"⚠️  Cannot confirm booking: user_id is required")
+            return current_lead
+        
+        update_data = {
+            "status": "confirmed",
+            "submission_state": "confirmed",
+            "user_id": user_id
+        }
+        
+        try:
+            self.db.table("leads").update(update_data).eq("session_id", session_id).execute()
+            print(f"✅ Booking confirmed with user_id: {user_id}")
+        except Exception as e:
+            print(f"⚠️  Could not update status: {e}")
         
         return self.get_lead(session_id)
 
@@ -210,6 +261,24 @@ class LeadManager:
         )
 
         return result.data if result.data else []
+
+    def get_user_leads(self, user_id: str) -> List[dict]:
+        """
+        Get all leads for a specific user.
+        Used for My Bookings page.
+        """
+        try:
+            result = (
+                self.db.table("leads")
+                .select("*")
+                .eq("user_id", user_id)
+                .order("created_at", desc=True)
+                .execute()
+            )
+            return result.data if result.data else []
+        except Exception as e:
+            print(f"⚠️  Error fetching user leads: {e}")
+            return []
 
 
 # Singleton instance

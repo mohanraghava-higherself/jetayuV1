@@ -25,6 +25,7 @@ class LeadState(BaseModel):
     special_requests: List[str] = []
     selected_aircraft: Optional[str] = None  # Aircraft name if selected
     status: str = "draft"  # draft | confirmed | contacted
+    submission_state: str = "collecting"  # collecting | awaiting_auth | confirmed
 
 
 class AircraftPricing(BaseModel):
@@ -57,7 +58,8 @@ class ChatResponse(BaseModel):
     show_aircraft: bool = False
     aircraft: Optional[List[AircraftSuggestion]] = None
     # Booking confirmation
-    booking_confirmed: bool = False  # True when user proceeds to book
+    booking_confirmed: bool = False  # True when user proceeds to book AND auth successful
+    requires_auth: bool = False  # True when booking requires authentication (blocks confirmation)
 
 
 # Internal schemas
