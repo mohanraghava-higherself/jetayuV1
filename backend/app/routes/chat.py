@@ -71,14 +71,29 @@ def detect_aircraft_selection(message: str) -> str | None:
 
 
 @router.post("/start", response_model=StartResponse)
-async def start_conversation():
+async def start_conversation(authorization: Optional[str] = Header(None)):
     """
     Start a new conversation session.
     Creates a session ID with a draft lead and returns the opening greeting.
     """
     try:
+        # Get current user (optional)
+        current_user = get_current_user_optional(authorization)
+
         # Create new session (with draft lead)
         session_id = lead_manager.create_session()
+
+        # If authenticated, attach user info and promote submission state
+        if current_user:
+            lead_manager.attach_user_and_promote(
+                session_id,
+                {
+                    "id": current_user.get("id"),
+                    "email": current_user.get("email"),
+                    "full_name": None  # Will be resolved from Auth API or profiles table
+                },
+                authorization=authorization
+            )
 
         # Generate greeting
         greeting = concierge_service.generate_greeting()
@@ -121,6 +136,19 @@ async def chat(
         
         # Get current user (optional - doesn't fail if not authenticated)
         current_user = get_current_user_optional(authorization)
+
+        # If authenticated, ensure lead is linked to user and promoted out of 'collecting'
+        # This MUST run every time to persist name/email into DB
+        if current_user:
+            lead_manager.attach_user_and_promote(
+                session_id,
+                {
+                    "id": current_user.get("id"),
+                    "email": current_user.get("email"),
+                    "full_name": None  # Will be resolved from Auth API or profiles table
+                },
+                authorization=authorization
+            )
 
         # Save user message
         lead_manager.save_message(session_id, "user", user_message)
@@ -173,8 +201,10 @@ async def chat(
                     requires_auth = True
                     print(f"🔒 Submission state set to 'awaiting_auth' - auth required")
                 else:
-                    # User is authenticated - can proceed directly to confirmation
+                    # User is authenticated - promote state and confirm
                     user_id = current_user["id"]
+                    # Promote to awaiting_auth before confirmation
+                    current_lead = lead_manager.set_submission_state(session_id, "awaiting_auth")
                     current_lead = lead_manager.confirm_booking(session_id, user_id=user_id)
                     booking_confirmed = True
                     print(f"✅ BOOKING CONFIRMED for session {session_id}")
@@ -263,6 +293,10 @@ async def chat(
             ]
             
             print(f"✈️  Showing aircraft: pax_just_extracted={pax_just_extracted}, wants_aircraft={wants_aircraft}, preference={preference}")
+
+        # FORCE DB RELOAD before computing missing_fields
+        # This ensures we use the final DB state, not stale in-memory objects
+        current_lead = lead_manager.get_lead(session_id)
 
         # Get missing fields
         missing_fields = lead_manager.get_missing_fields(current_lead)

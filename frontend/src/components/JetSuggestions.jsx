@@ -1,14 +1,18 @@
 import { motion } from 'framer-motion'
 import JetCard from './JetCard'
 
-export default function JetSuggestions({ aircraft = [], onSelect }) {
+export default function JetSuggestions({ aircraft = [], onSelect, onCardClick }) {
   const handleViewMore = (jet) => {
     // For V1, send a message asking for more details
     onSelect(`Tell me more about the ${jet.name}`)
   }
 
   const handleSelect = (jet) => {
-    onSelect(`I'm interested in the ${jet.name}`)
+    if (onCardClick) {
+      onCardClick(jet)
+    } else {
+      onSelect(`I'm interested in the ${jet.name}`)
+    }
   }
 
   if (!aircraft || aircraft.length === 0) {
@@ -30,7 +34,7 @@ export default function JetSuggestions({ aircraft = [], onSelect }) {
         </h3>
       </div>
       
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-3">
         {aircraft.map((jet, index) => (
           <motion.div
             key={jet.id}
@@ -42,6 +46,7 @@ export default function JetSuggestions({ aircraft = [], onSelect }) {
               jet={jet}
               onSelect={handleSelect}
               onViewMore={handleViewMore}
+              compact={true}
             />
           </motion.div>
         ))}

@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
-import { AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
+import { getUserContext } from './lib/userContext'
 import LandingPage from './components/LandingPage'
 import AuthModal from './components/AuthModal'
 import MyBookings from './components/MyBookings'
-import Header from './components/Header'
+import MyProfile from './components/MyProfile'
+import Sidebar from './components/Sidebar'
 import ChatMessage from './components/ChatMessage'
 import ChatInput from './components/ChatInput'
 import TypingIndicator from './components/TypingIndicator'
@@ -31,6 +33,7 @@ export default function App() {
   const [aircraft, setAircraft] = useState([])
   const [leadState, setLeadState] = useState(null)
   const [bookingConfirmed, setBookingConfirmed] = useState(false)
+  const [selectedAircraft, setSelectedAircraft] = useState(null)
   const messagesEndRef = useRef(null)
   const hasInitialized = useRef(false)
 
@@ -38,12 +41,27 @@ export default function App() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null)
+      if (session?.user) {
+        console.log('👤 User logged in:')
+        console.log('   Name:', session.user.user_metadata?.full_name || 'Not set')
+        console.log('   Email:', session.user.email || 'Not set')
+        console.log('   User ID:', session.user.id)
+      }
     })
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
+      
+      if (session?.user) {
+        console.log('👤 User logged in:')
+        console.log('   Name:', session.user.user_metadata?.full_name || 'Not set')
+        console.log('   Email:', session.user.email || 'Not set')
+        console.log('   User ID:', session.user.id)
+      } else {
+        console.log('👤 User logged out')
+      }
       
       // If user just logged in and there's a pending booking, retry it
       if (session?.user && pendingBookingSessionId) {
@@ -76,6 +94,18 @@ export default function App() {
     setView('bookings')
   }
 
+  const handleMyProfile = () => {
+    if (!user) {
+      setShowAuthModal(true)
+      return
+    }
+    setView('profile')
+  }
+
+  const handleLogout = () => {
+    setView('landing')
+  }
+
   const handleAuthSuccess = async () => {
     setShowAuthModal(false)
     // If there's a pending booking, retry it after auth success
@@ -103,9 +133,29 @@ export default function App() {
   const startSession = async () => {
     setIsLoading(true)
     try {
+      // Get user context if authenticated
+      const userContext = await getUserContext()
+      const headers = { 'Content-Type': 'application/json' }
+      const body = {}
+      
+      // Add user info if authenticated
+      if (userContext.isAuthenticated) {
+        body.user_id = userContext.user_id
+        body.email = userContext.email
+        if (userContext.full_name) {
+          body.full_name = userContext.full_name
+        }
+        // Add auth token
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.access_token) {
+          headers['Authorization'] = `Bearer ${session.access_token}`
+        }
+      }
+
       const response = await fetch(`${API_BASE}/start`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
+        body: JSON.stringify(body),
       })
       const data = await response.json()
       
@@ -144,9 +194,27 @@ export default function App() {
     let currentSessionId = sessionId
     if (!currentSessionId) {
       try {
+        // Get user context if authenticated
+        const userContext = await getUserContext()
+        const startHeaders = { 'Content-Type': 'application/json' }
+        const startBody = {}
+        
+        if (userContext.isAuthenticated) {
+          startBody.user_id = userContext.user_id
+          startBody.email = userContext.email
+          if (userContext.full_name) {
+            startBody.full_name = userContext.full_name
+          }
+          const { data: { session } } = await supabase.auth.getSession()
+          if (session?.access_token) {
+            startHeaders['Authorization'] = `Bearer ${session.access_token}`
+          }
+        }
+        
         const startResponse = await fetch(`${API_BASE}/start`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: startHeaders,
+          body: JSON.stringify(startBody),
         })
         const startData = await startResponse.json()
         currentSessionId = startData.session_id
@@ -157,22 +225,35 @@ export default function App() {
     }
 
     try {
-      // Get auth token if user is logged in
-      const { data: { session } } = await supabase.auth.getSession()
+      // Get user context if authenticated
+      const userContext = await getUserContext()
       const headers = {
         'Content-Type': 'application/json',
       }
-      if (session?.access_token) {
-        headers['Authorization'] = `Bearer ${session.access_token}`
+      
+      const body = {
+        session_id: currentSessionId,
+        message: content,
+      }
+      
+      // Add user info if authenticated (so concierge doesn't ask for it)
+      if (userContext.isAuthenticated) {
+        body.user_id = userContext.user_id
+        body.email = userContext.email
+        if (userContext.full_name) {
+          body.full_name = userContext.full_name
+        }
+        // Add auth token
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.access_token) {
+          headers['Authorization'] = `Bearer ${session.access_token}`
+        }
       }
 
       const response = await fetch(`${API_BASE}/chat`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({
-          session_id: currentSessionId,
-          message: content,
-        }),
+        body: JSON.stringify(body),
       })
       const data = await response.json()
 
@@ -232,14 +313,32 @@ export default function App() {
     setShowJets(false)
   }
 
-  // Render based on current view
-  if (view === 'landing') {
+  const handleAircraftCardClick = (jet) => {
+    setSelectedAircraft(jet)
+  }
+
+  // Unified layout wrapper for all views
+  const renderLayout = (content) => {
     return (
       <>
-        <LandingPage 
-          onStartChat={handleStartChat}
-          onMyBookings={handleMyBookings}
-        />
+        <div className="h-screen flex bg-jet-950">
+          {/* Sidebar - rendered once for all views */}
+          <Sidebar 
+            activeView={view} 
+            onNavigate={(view) => {
+              if (view === 'landing') setView('landing')
+              if (view === 'chat') handleStartChat()
+              if (view === 'bookings') handleMyBookings()
+              if (view === 'profile') handleMyProfile()
+            }}
+            onAuthClick={() => setShowAuthModal(true)}
+            onMyBookings={handleMyBookings}
+            onMyProfile={handleMyProfile}
+            onLogout={handleLogout}
+            user={user}
+          />
+          {content}
+        </div>
         <AuthModal
           isOpen={showAuthModal}
           onClose={handleAuthClose}
@@ -249,68 +348,293 @@ export default function App() {
     )
   }
 
+  // Render based on current view
+  if (view === 'landing') {
+    return renderLayout(
+      <LandingPage 
+        onStartChat={handleStartChat}
+        onMyBookings={handleMyBookings}
+        onAuthClick={() => setShowAuthModal(true)}
+      />
+    )
+  }
+
   if (view === 'bookings') {
-    return (
-      <>
-        <MyBookings onBack={() => setView('landing')} />
-        <AuthModal
-          isOpen={showAuthModal}
-          onClose={handleAuthClose}
-          onSuccess={handleAuthSuccess}
-        />
-      </>
+    return renderLayout(
+      <MyBookings 
+        onBack={() => setView('landing')}
+        user={user}
+        onAuthClick={() => setShowAuthModal(true)}
+        onMyBookings={handleMyBookings}
+        onMyProfile={handleMyProfile}
+        onLogout={handleLogout}
+      />
+    )
+  }
+
+  if (view === 'profile') {
+    return renderLayout(
+      <MyProfile 
+        onBack={() => setView('landing')}
+        user={user}
+        onAuthClick={() => setShowAuthModal(true)}
+        onMyBookings={handleMyBookings}
+        onMyProfile={handleMyProfile}
+        onLogout={handleLogout}
+      />
     )
   }
 
   // Chat view
   return (
     <>
-      <div className="h-full flex flex-col bg-gradient-luxury">
-        <Header 
-          user={user}
+      <div className="h-screen flex bg-jet-950">
+        {/* Sidebar */}
+        <Sidebar 
+          activeView="chat" 
+          onNavigate={(view) => {
+            if (view === 'landing') setView('landing')
+            if (view === 'bookings') handleMyBookings()
+            if (view === 'profile') handleMyProfile()
+          }}
           onAuthClick={() => setShowAuthModal(true)}
           onMyBookings={handleMyBookings}
+          onMyProfile={handleMyProfile}
+          onLogout={handleLogout}
+          user={user}
         />
         
-        <main className="flex-1 overflow-y-auto hide-scrollbar">
-          <div className="max-w-3xl mx-auto px-4 py-6">
-            <div className="fixed inset-0 pointer-events-none overflow-hidden">
-              <div className="absolute top-1/4 -left-1/4 w-96 h-96 bg-gold-500/5 rounded-full blur-3xl" />
-              <div className="absolute bottom-1/4 -right-1/4 w-96 h-96 bg-gold-500/3 rounded-full blur-3xl" />
+        {/* Chat Layout Container - Centers when no aircraft selected, splits when selected */}
+        <motion.div 
+          className="relative" 
+          initial={false}
+          animate={{
+            justifyContent: selectedAircraft ? 'flex-start' : 'center'
+          }}
+          transition={{ duration: 0.3, ease: 'easeInOut' }}
+          style={{ 
+            marginLeft: '103px', 
+            height: '100vh', 
+            width: 'calc(100% - 103px)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: selectedAircraft ? '24px' : '0',
+            padding: '24px'
+          }}
+        >
+          {/* Chat Panel */}
+          <motion.main 
+            className="relative"
+            initial={false}
+            animate={{
+              x: selectedAircraft ? 0 : 0,
+            }}
+            transition={{ duration: 0.3, ease: 'easeInOut' }}
+            style={{
+              width: '704px',
+              height: '100%',
+              backgroundColor: '#060201',
+              backdropFilter: 'blur(24px)',
+              boxShadow: '0px 2px 40px rgba(0, 0, 0, 0.1)',
+              borderRadius: '24px',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden'
+            }}
+          >
+            {/* Scrollable Messages Area */}
+            <div className="flex-1 overflow-y-auto hide-scrollbar relative" style={{ padding: '48px 24px' }}>
+              <div className="relative z-10" style={{ width: '100%' }}>
+
+                <AnimatePresence mode="popLayout">
+                  {messages.map((message) => (
+                    <ChatMessage
+                      key={message.id}
+                      message={message.content}
+                      isUser={message.role === 'user'}
+                      isNew={message.isNew}
+                    />
+                  ))}
+                </AnimatePresence>
+
+                <AnimatePresence>
+                  {isLoading && <TypingIndicator />}
+                </AnimatePresence>
+
+                <AnimatePresence>
+                  {bookingConfirmed && <BookingConfirmed />}
+                </AnimatePresence>
+
+                <AnimatePresence>
+                  {showJets && !isLoading && aircraft.length > 0 && (
+                    <JetSuggestions 
+                      aircraft={aircraft} 
+                      onSelect={handleJetSelect}
+                      onCardClick={handleAircraftCardClick}
+                    />
+                  )}
+                </AnimatePresence>
+
+                <div ref={messagesEndRef} className="h-8" />
+              </div>
             </div>
-
-            <div className="relative z-10 space-y-2">
-              <AnimatePresence mode="popLayout">
-                {messages.map((message) => (
-                  <ChatMessage
-                    key={message.id}
-                    message={message.content}
-                    isUser={message.role === 'user'}
-                    isNew={message.isNew}
-                  />
-                ))}
-              </AnimatePresence>
-
-              <AnimatePresence>
-                {isLoading && <TypingIndicator />}
-              </AnimatePresence>
-
-              <AnimatePresence>
-                {bookingConfirmed && <BookingConfirmed />}
-              </AnimatePresence>
-
-              <AnimatePresence>
-                {showJets && !isLoading && aircraft.length > 0 && (
-                  <JetSuggestions aircraft={aircraft} onSelect={handleJetSelect} />
-                )}
-              </AnimatePresence>
+            
+            {/* Chat Input - Fixed at bottom */}
+            <div style={{ flexShrink: 0 }}>
+              <ChatInput onSend={sendMessage} disabled={isLoading} />
             </div>
+          </motion.main>
 
-            <div ref={messagesEndRef} className="h-4" />
-          </div>
-        </main>
+          {/* Aircraft Panel (RIGHT) - Only visible when aircraft is selected */}
+          <AnimatePresence>
+            {selectedAircraft && (
+              <motion.aside
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                transition={{ duration: 0.3 }}
+                style={{
+                  flex: 1,
+                  maxWidth: '600px',
+                  height: '100%',
+                  backgroundColor: 'rgba(21, 21, 21, 0.8)',
+                  backdropFilter: 'blur(24px)',
+                  borderRadius: '24px',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  boxShadow: '0px 2px 40px rgba(0, 0, 0, 0.2)',
+                  overflow: 'hidden',
+                  display: 'flex',
+                  flexDirection: 'column'
+                }}
+              >
+                {/* Close Button */}
+                <div style={{ padding: '20px', display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    onClick={() => setSelectedAircraft(null)}
+                    style={{
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '8px',
+                      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      color: 'white',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </button>
+                </div>
 
-        <ChatInput onSend={sendMessage} disabled={isLoading} />
+                {/* Aircraft Details */}
+                <div className="flex-1 overflow-y-auto" style={{ padding: '0 24px 24px 24px' }}>
+                  {/* Large Image */}
+                  <div style={{ width: '100%', height: '300px', borderRadius: '16px', overflow: 'hidden', marginBottom: '24px' }}>
+                    <img
+                      src={selectedAircraft.image_url || selectedAircraft.image}
+                      alt={selectedAircraft.name}
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'cover'
+                      }}
+                      onError={(e) => {
+                        e.target.style.display = 'none'
+                      }}
+                    />
+                  </div>
+
+                  {/* Aircraft Name */}
+                  <h2 style={{
+                    fontSize: '28px',
+                    fontWeight: 400,
+                    color: '#FFFFFF',
+                    marginBottom: '24px',
+                    fontFamily: 'Cormorant Garamond, serif'
+                  }}>
+                    {selectedAircraft.name}
+                  </h2>
+
+                  {/* Specs Row */}
+                  <div style={{
+                    display: 'flex',
+                    gap: '24px',
+                    marginBottom: '24px',
+                    paddingBottom: '24px',
+                    borderBottom: '1px solid rgba(255, 255, 255, 0.1)'
+                  }}>
+                    <div>
+                      <div style={{ fontSize: '20px', fontWeight: 500, color: '#FFFFFF', marginBottom: '4px' }}>
+                        {selectedAircraft.capacity || 'N/A'}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.5)' }}>
+                        Passengers
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '20px', fontWeight: 500, color: '#FFFFFF', marginBottom: '4px' }}>
+                        {selectedAircraft.range_nm ? `${selectedAircraft.range_nm.toLocaleString()} nm` : selectedAircraft.range || 'N/A'}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.5)' }}>
+                        Max Range
+                      </div>
+                    </div>
+                    {selectedAircraft.speed_kph && (
+                      <div>
+                        <div style={{ fontSize: '20px', fontWeight: 500, color: '#FFFFFF', marginBottom: '4px' }}>
+                          {selectedAircraft.speed_kph} km/h
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.5)' }}>
+                          Top Speed
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Description */}
+                  {selectedAircraft.description && (
+                    <p style={{
+                      fontSize: '15px',
+                      lineHeight: '1.6',
+                      color: 'rgba(255, 255, 255, 0.7)',
+                      marginBottom: '24px'
+                    }}>
+                      {selectedAircraft.description}
+                    </p>
+                  )}
+
+                  {/* Select Button */}
+                  <button
+                    onClick={() => {
+                      handleJetSelect(`I'm interested in the ${selectedAircraft.name}`)
+                      setSelectedAircraft(null)
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '16px 24px',
+                      backgroundColor: '#FFFFFF',
+                      color: '#0a0a0a',
+                      borderRadius: '12px',
+                      fontSize: '16px',
+                      fontWeight: 500,
+                      border: 'none',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => e.target.style.backgroundColor = '#f5f5f5'}
+                    onMouseLeave={(e) => e.target.style.backgroundColor = '#FFFFFF'}
+                  >
+                    Select this aircraft
+                  </button>
+                </div>
+              </motion.aside>
+            )}
+          </AnimatePresence>
+        </motion.div>
       </div>
 
       <AuthModal

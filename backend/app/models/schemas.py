@@ -26,6 +26,7 @@ class LeadState(BaseModel):
     selected_aircraft: Optional[str] = None  # Aircraft name if selected
     status: str = "draft"  # draft | confirmed | contacted
     submission_state: str = "collecting"  # collecting | awaiting_auth | confirmed
+    user_id: Optional[str] = None  # User ID if authenticated
 
 
 class AircraftPricing(BaseModel):

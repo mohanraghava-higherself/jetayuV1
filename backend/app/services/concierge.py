@@ -180,9 +180,9 @@ class ConciergeService:
                 "route_to",
                 "date_time",
                 "pax",
-                "special_requests",  # Ask about special needs BEFORE contact info
                 "name",
                 "email",
+                "special_requests",  # Ask about special needs BEFORE contact info
             ]
             next_field = None
             for field in priority_order:

@@ -6,13 +6,37 @@ const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}` 
   : '/api'
 
-export default function MyBookings({ onBack }) {
+export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, onMyProfile, onLogout }) {
   const [bookings, setBookings] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
 
   useEffect(() => {
-    loadBookings()
+    // Route protection: Check if user is authenticated
+    const checkAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        // Redirect to landing and open auth modal
+        setIsAuthenticated(false)
+        if (onBack) {
+          onBack()
+        }
+        // Small delay to ensure navigation happens before modal opens
+        setTimeout(() => {
+          if (onAuthClick) {
+            onAuthClick()
+          }
+        }, 100)
+        return
+      }
+      // User is authenticated, load bookings
+      setIsAuthenticated(true)
+      loadBookings()
+    }
+    
+    checkAuth()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const loadBookings = async () => {
@@ -44,15 +68,28 @@ export default function MyBookings({ onBack }) {
       if (!response.ok) {
         if (response.status === 401) {
           setError('Authentication required')
+          setLoading(false)
+          // Redirect to landing and open auth modal
+          if (onBack) {
+            onBack()
+          }
+          setTimeout(() => {
+            if (onAuthClick) {
+              onAuthClick()
+            }
+          }, 100)
+          return
         } else {
           throw new Error('Failed to load bookings')
         }
-        setLoading(false)
-        return
       }
 
       const data = await response.json()
-      setBookings(data.bookings || [])
+      // Filter to only show confirmed bookings
+      const confirmedBookings = (data.bookings || []).filter(
+        booking => booking.status === 'confirmed'
+      )
+      setBookings(confirmedBookings)
     } catch (err) {
       setError(err.message || 'Failed to load bookings')
     } finally {
@@ -60,61 +97,42 @@ export default function MyBookings({ onBack }) {
     }
   }
 
-  const formatDate = (dateString) => {
+  const formatTime = (dateString) => {
     if (!dateString) return 'N/A'
     try {
-      return new Date(dateString).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
+      return new Date(dateString).toLocaleTimeString('en-US', {
         hour: '2-digit',
         minute: '2-digit',
+        hour12: true,
       })
     } catch {
-      return dateString
+      return 'N/A'
     }
   }
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'confirmed':
-        return 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20'
-      case 'contacted':
-        return 'text-blue-400 bg-blue-400/10 border-blue-400/20'
-      default:
-        return 'text-jet-400 bg-jet-400/10 border-jet-400/20'
-    }
+  const formatFlightDuration = (routeFrom, routeTo) => {
+    // This is a placeholder - in real app, calculate based on distance
+    return '11 Hours'
+  }
+
+  // Since we only show confirmed bookings, status is always "Confirmed"
+  const getBookingStatus = () => {
+    return { text: 'Confirmed', color: 'text-emerald-400' }
+  }
+
+  // Do NOT render UI if not authenticated
+  if (!isAuthenticated) {
+    return null
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-luxury">
-      {/* Header */}
-      <header className="glass border-b border-jet-800/50 sticky top-0 z-50">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={onBack}
-              className="text-jet-400 hover:text-jet-200 transition-colors"
-            >
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-            <div>
-              <h1 className="font-display text-xl font-semibold text-jet-100 tracking-wide">
-                My Bookings
-              </h1>
-              <p className="text-[10px] text-jet-500 uppercase tracking-[0.2em]">
-                Your Private Aviation Requests
-              </p>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Content */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className="flex-1 ml-16 flex h-screen overflow-hidden">
+        {/* Bookings List */}
+        <main className="flex-1 overflow-y-auto h-full">
+          <div className="max-w-4xl mx-auto px-8 py-12">
+            <h1 className="font-display text-4xl font-light text-jet-100 mb-12 tracking-tight">
+              My Bookings
+            </h1>
           {loading && (
             <div className="text-center py-12">
               <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gold-500"></div>
@@ -125,18 +143,32 @@ export default function MyBookings({ onBack }) {
           {error && (
             <div className="text-center py-12">
               <p className="text-red-400 mb-4">{error}</p>
-              <button
-                onClick={loadBookings}
-                className="px-4 py-2 bg-jet-800 hover:bg-jet-700 text-jet-200 rounded-lg transition-colors"
-              >
-                Try Again
-              </button>
+              {error === 'Authentication required' ? (
+                <button
+                  onClick={() => {
+                    if (onBack) onBack()
+                    setTimeout(() => {
+                      if (onAuthClick) onAuthClick()
+                    }, 100)
+                  }}
+                  className="px-4 py-2 bg-gold-500 hover:bg-gold-600 text-jet-950 font-medium rounded-lg transition-colors"
+                >
+                  Sign In
+                </button>
+              ) : (
+                <button
+                  onClick={loadBookings}
+                  className="px-4 py-2 bg-jet-800 hover:bg-jet-700 text-jet-200 rounded-lg transition-colors"
+                >
+                  Try Again
+                </button>
+              )}
             </div>
           )}
 
           {!loading && !error && bookings.length === 0 && (
             <div className="text-center py-12">
-              <p className="text-jet-400 mb-4">No bookings yet</p>
+              <p className="text-jet-400 mb-4">No confirmed bookings yet</p>
               <button
                 onClick={onBack}
                 className="px-6 py-3 bg-gold-500 hover:bg-gold-600 text-jet-950 font-medium rounded-lg transition-all duration-200"
@@ -148,89 +180,88 @@ export default function MyBookings({ onBack }) {
 
           {!loading && !error && bookings.length > 0 && (
             <div className="space-y-4">
-              {bookings.map((booking, index) => (
-                <motion.div
-                  key={booking.session_id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.1 }}
-                  className="glass border border-jet-800 rounded-xl p-6 hover:border-jet-700 transition-colors"
-                >
-                  <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-                    {/* Left: Route & Details */}
-                    <div className="flex-1">
-                      <div className="flex items-start gap-4 mb-4">
-                        <div className="flex-1">
-                          <h3 className="text-lg font-semibold text-jet-100 mb-2">
-                            {booking.route_from && booking.route_to ? (
-                              <>
-                                {booking.route_from} → {booking.route_to}
-                              </>
-                            ) : (
-                              'Flight Request'
-                            )}
-                          </h3>
-                          
-                          <div className="grid grid-cols-2 gap-4 text-sm text-jet-400">
-                            {booking.date_time && (
-                              <div>
-                                <span className="text-jet-500">Date:</span>{' '}
-                                <span className="text-jet-300">{booking.date_time}</span>
-                              </div>
-                            )}
-                            {booking.pax && (
-                              <div>
-                                <span className="text-jet-500">Passengers:</span>{' '}
-                                <span className="text-jet-300">{booking.pax}</span>
-                              </div>
-                            )}
-                            {booking.selected_aircraft && (
-                              <div className="col-span-2">
-                                <span className="text-jet-500">Aircraft:</span>{' '}
-                                <span className="text-jet-300">{booking.selected_aircraft}</span>
-                              </div>
-                            )}
-                            {booking.name && (
-                              <div>
-                                <span className="text-jet-500">Name:</span>{' '}
-                                <span className="text-jet-300">{booking.name}</span>
-                              </div>
-                            )}
-                            {booking.email && (
-                              <div>
-                                <span className="text-jet-500">Email:</span>{' '}
-                                <span className="text-jet-300">{booking.email}</span>
-                              </div>
-                            )}
-                          </div>
+              {bookings.map((booking, index) => {
+                const status = getBookingStatus()
+                const routeFrom = booking.route_from || 'Dubai'
+                const routeTo = booking.route_to || 'Singapore'
+                const fromCode = booking.route_from ? booking.route_from.substring(0, 3).toUpperCase() : 'DXB'
+                const toCode = booking.route_to ? booking.route_to.substring(0, 3).toUpperCase() : 'SIN'
+                const aircraft = booking.selected_aircraft || 'Gulfstream G650'
+                
+                return (
+                  <motion.div
+                    key={booking.session_id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.1 }}
+                    className={`
+                      bg-jet-900/60 backdrop-blur-md border rounded-2xl p-6 
+                      ${index === 0 
+                        ? 'border-rose-500/30 bg-gradient-to-r from-rose-900/20 to-jet-900/60' 
+                        : 'border-jet-800/50 hover:border-jet-700/50'
+                      }
+                      transition-all duration-300 cursor-pointer
+                    `}
+                  >
+                    <div className="flex items-center justify-between">
+                      {/* Left: Origin */}
+                      <div className="flex-1">
+                        <p className="text-sm text-jet-500 mb-1">{routeFrom}</p>
+                        <p className="text-3xl font-bold text-jet-100 mb-1">{fromCode}</p>
+                        <p className="text-sm text-jet-500">{formatTime(booking.date_time)}</p>
+                      </div>
+
+                      {/* Center: Aircraft & Duration */}
+                      <div className="flex-1 flex flex-col items-center px-8">
+                        <div className="mb-4">
+                          <svg className="w-24 h-8 text-jet-600" fill="currentColor" viewBox="0 0 120 40">
+                            <path d="M10 20 L30 15 L90 15 L110 20 L90 25 L30 25 Z" />
+                          </svg>
                         </div>
+                        <p className="text-sm text-jet-400 mb-2">{aircraft}</p>
+                        <p className="text-xs text-jet-500">{formatFlightDuration(routeFrom, routeTo)}</p>
+                      </div>
+
+                      {/* Right: Destination */}
+                      <div className="flex-1 text-right">
+                        <p className="text-sm text-jet-500 mb-1">{routeTo}</p>
+                        <p className="text-3xl font-bold text-jet-100 mb-1">{toCode}</p>
+                        <p className="text-sm text-jet-500">
+                          {booking.date_time ? formatTime(booking.date_time) : '12:16 PM'}
+                        </p>
                       </div>
                     </div>
 
-                    {/* Right: Status & Date */}
-                    <div className="flex flex-col items-end gap-3">
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(
-                          booking.status
-                        )}`}
-                      >
-                        {booking.status === 'confirmed'
-                          ? 'Confirmed'
-                          : booking.status === 'contacted'
-                          ? 'Contacted'
-                          : 'Draft'}
-                      </span>
-                      <span className="text-xs text-jet-500">
-                        {formatDate(booking.created_at)}
-                      </span>
+                    {/* Status Badge */}
+                    <div className="mt-4 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full ${status.color.replace('text-', 'bg-')} opacity-60`} />
+                        <span className={`text-xs ${status.color}`}>• {status.text}</span>
+                      </div>
+                      <svg className="w-5 h-5 text-jet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
                     </div>
-                  </div>
-                </motion.div>
-              ))}
+                  </motion.div>
+                )
+              })}
             </div>
           )}
-        </div>
-      </main>
+          </div>
+        </main>
+
+        {/* Details Panel - Placeholder */}
+        <aside className="w-96 bg-jet-900/60 backdrop-blur-md border-l border-jet-800/50 p-8">
+          <h2 className="font-display text-2xl font-light text-jet-100 mb-8">Booking Details</h2>
+          <div className="flex items-center justify-center h-64">
+            <div className="text-center">
+              <div className="w-16 h-16 rounded-full bg-purple-500/20 flex items-center justify-center mx-auto mb-4">
+                <span className="text-2xl font-bold text-purple-400">WIP</span>
+              </div>
+              <p className="text-sm text-jet-500">Work In Progress</p>
+            </div>
+          </div>
+        </aside>
     </div>
   )
 }

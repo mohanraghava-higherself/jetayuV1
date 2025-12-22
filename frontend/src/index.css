@@ -2,6 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Jt Barnez Font - Commented out until valid font files are added */
+/* The font files are missing or corrupted, causing browser warnings */
+/* Uncomment and add valid font files to /public/fonts/ when available */
+/*
+@font-face {
+  font-family: 'Jt Barnez';
+  src: url('/fonts/JtBarnez-Regular.woff2') format('woff2'),
+       url('/fonts/JtBarnez-Regular.woff') format('woff'),
+       url('/fonts/JtBarnez-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+*/
+
 :root {
   --color-bg-primary: #0a0a0a;
   --color-bg-secondary: #171717;
