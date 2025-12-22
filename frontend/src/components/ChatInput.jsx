@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 
-export default function ChatInput({ onSend, disabled }) {
+export default function ChatInput({ onSend, disabled, placeholder }) {
   const [message, setMessage] = useState('')
 
   const handleSubmit = (e) => {
@@ -46,7 +46,7 @@ export default function ChatInput({ onSend, disabled }) {
                 type="text"
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                placeholder="New York to London, tomorrow evening..."
+                placeholder={placeholder || ''}
                 disabled={disabled}
                 style={{
                   width: '100%',

@@ -6,7 +6,7 @@ const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}` 
   : '/api'
 
-export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, onMyProfile, onLogout }) {
+export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, onMyProfile, onLogout, onStartNewBooking }) {
   const [bookings, setBookings] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -130,9 +130,22 @@ export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, on
         {/* Bookings List */}
         <main className="flex-1 overflow-y-auto h-full">
           <div className="max-w-4xl mx-auto px-8 py-12">
-            <h1 className="font-display text-4xl font-light text-jet-100 mb-12 tracking-tight">
-              My Bookings
-            </h1>
+            <div className="flex items-center justify-between mb-12">
+              <h1 className="font-display text-4xl font-light text-jet-100 tracking-tight">
+                My Bookings
+              </h1>
+              {!loading && !error && bookings.length > 0 && onStartNewBooking && (
+                <button
+                  onClick={onStartNewBooking}
+                  className="px-6 py-3 bg-gold-500 hover:bg-gold-600 text-jet-950 font-medium rounded-lg transition-all duration-200 flex items-center gap-2"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Start Another Booking
+                </button>
+              )}
+            </div>
           {loading && (
             <div className="text-center py-12">
               <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gold-500"></div>
@@ -169,12 +182,24 @@ export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, on
           {!loading && !error && bookings.length === 0 && (
             <div className="text-center py-12">
               <p className="text-jet-400 mb-4">No confirmed bookings yet</p>
-              <button
-                onClick={onBack}
-                className="px-6 py-3 bg-gold-500 hover:bg-gold-600 text-jet-950 font-medium rounded-lg transition-all duration-200"
-              >
-                Start a Conversation
-              </button>
+              {onStartNewBooking ? (
+                <button
+                  onClick={onStartNewBooking}
+                  className="px-6 py-3 bg-gold-500 hover:bg-gold-600 text-jet-950 font-medium rounded-lg transition-all duration-200 flex items-center gap-2 mx-auto"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Start a Conversation
+                </button>
+              ) : (
+                <button
+                  onClick={onBack}
+                  className="px-6 py-3 bg-gold-500 hover:bg-gold-600 text-jet-950 font-medium rounded-lg transition-all duration-200"
+                >
+                  Start a Conversation
+                </button>
+              )}
             </div>
           )}
 

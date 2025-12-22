@@ -78,8 +78,19 @@ export default function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isLoading, showJets])
 
-  const handleStartChat = () => {
+  const handleStartChat = (resetSession = false) => {
     setView('chat')
+    if (resetSession) {
+      // Reset chat state for a fresh booking
+      setMessages([])
+      setSessionId(null)
+      setShowJets(false)
+      setAircraft([])
+      setLeadState(null)
+      setBookingConfirmed(false)
+      setSelectedAircraft(null)
+      hasInitialized.current = false
+    }
     if (!hasInitialized.current) {
       hasInitialized.current = true
       startSession()
@@ -282,7 +293,17 @@ export default function App() {
 
       if (data.booking_confirmed) {
         setBookingConfirmed(true)
-        setTimeout(() => setBookingConfirmed(false), 5000)
+        // Show BookingConfirmed UI briefly, then redirect to MyBookings
+        setTimeout(() => {
+          setBookingConfirmed(false)
+          // Navigate to MyBookings after showing confirmation
+          if (user) {
+            setView('bookings')
+          } else {
+            // If somehow not authenticated, open auth modal
+            setShowAuthModal(true)
+          }
+        }, 2500) // 2.5 seconds - brief enough to see confirmation, fast enough for UX
       }
     } catch (error) {
       console.error('Failed to send message:', error)
@@ -368,6 +389,7 @@ export default function App() {
         onMyBookings={handleMyBookings}
         onMyProfile={handleMyProfile}
         onLogout={handleLogout}
+        onStartNewBooking={() => handleStartChat(true)}
       />
     )
   }
@@ -481,7 +503,11 @@ export default function App() {
             
             {/* Chat Input - Fixed at bottom */}
             <div style={{ flexShrink: 0 }}>
-              <ChatInput onSend={sendMessage} disabled={isLoading} />
+              <ChatInput 
+                onSend={sendMessage} 
+                disabled={isLoading}
+                placeholder={messages.length === 0 && !sessionId ? "Type your request…" : ""}
+              />
             </div>
           </motion.main>
 
