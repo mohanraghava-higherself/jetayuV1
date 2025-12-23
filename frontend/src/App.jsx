@@ -8,6 +8,7 @@ import AuthModal from './components/AuthModal'
 import MyBookings from './components/MyBookings'
 import MyProfile from './components/MyProfile'
 import Sidebar from './components/Sidebar'
+import MobileHeader from './components/MobileHeader'
 import ChatMessage from './components/ChatMessage'
 import ChatInput from './components/ChatInput'
 import TypingIndicator from './components/TypingIndicator'
@@ -52,12 +53,47 @@ export default function App() {
   const [selectedAircraft, setSelectedAircraft] = useState(null) // Confirmed aircraft from backend
   const [previewAircraft, setPreviewAircraft] = useState(null) // Preview panel state (user browsing)
   const [showPhotoGallery, setShowPhotoGallery] = useState(false)
+  const [isMobile, setIsMobile] = useState(false)
   const messagesEndRef = useRef(null)
   const hasInitialized = useRef(false)
   const prevRoutePaxRef = useRef({ route_from: null, route_to: null, pax: null })
   const messageIdCounter = useRef(0)
   const prevMessageCountRef = useRef(0)
   const scrollContainerRef = useRef(null)
+
+  // Mobile detection
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768)
+    }
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
+
+  // Disable body scroll on mobile (global scroll rule)
+  useEffect(() => {
+    if (isMobile) {
+      document.documentElement.style.overflow = 'hidden'
+      document.documentElement.style.height = '100vh'
+      document.body.style.overflow = 'hidden'
+      document.body.style.height = '100vh'
+      document.body.style.width = '100%'
+    } else {
+      document.documentElement.style.overflow = ''
+      document.documentElement.style.height = ''
+      document.body.style.overflow = ''
+      document.body.style.height = ''
+      document.body.style.width = ''
+    }
+    return () => {
+      document.documentElement.style.overflow = ''
+      document.documentElement.style.height = ''
+      document.body.style.overflow = ''
+      document.body.style.height = ''
+      document.body.style.width = ''
+    }
+  }, [isMobile])
 
   // Persist sessionId
   useEffect(() => {
@@ -644,6 +680,41 @@ export default function App() {
 
   // Unified layout wrapper for all views
   const renderLayout = (content) => {
+    if (isMobile) {
+      return (
+        <>
+          <MobileHeader
+            user={user}
+            onAuthClick={() => setShowAuthModal(true)}
+            onMyBookings={handleMyBookings}
+            onMyProfile={handleMyProfile}
+            onLogout={handleLogout}
+          />
+          <div
+            style={{
+              marginTop: '64px',
+              width: '100%',
+              height: 'calc(100vh - 64px)',
+              backgroundColor: '#060201',
+              backdropFilter: 'blur(24px)',
+              position: 'relative',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+          >
+            {content}
+          </div>
+          <AuthModal
+            isOpen={showAuthModal}
+            onClose={handleAuthClose}
+            onSuccess={handleAuthSuccess}
+            externalError={authBlockingError}
+          />
+        </>
+      )
+    }
+    
     return (
       <>
         <div className="h-screen bg-jet-950" style={{ position: 'relative' }}>
@@ -718,36 +789,410 @@ export default function App() {
     />
   )
 
-  const ChatRoute = () => (
-    <>
-      <div className="h-screen bg-jet-950" style={{ position: 'relative' }}>
-        {/* Sidebar - fixed position, out of flow */}
-        <Sidebar 
-          activeView="chat" 
-          onNavigate={(viewName) => {
-            if (viewName === 'landing') navigate('/')
-            if (viewName === 'chat') navigate('/chat')
-            if (viewName === 'bookings') handleMyBookings()
-            if (viewName === 'profile') handleMyProfile()
-          }}
-          onAuthClick={() => setShowAuthModal(true)}
-          onMyBookings={handleMyBookings}
-          onMyProfile={handleMyProfile}
-          onLogout={handleLogout}
-          user={user}
-        />
-        
-        {/* Shared background container matching landing page - starts exactly at 103px */}
-        <div
-          style={{
-            marginLeft: '103px',
-            width: 'calc(100% - 103px)',
-            height: '100vh',
-            backgroundColor: '#060201',
-            backdropFilter: 'blur(24px)',
-            position: 'relative'
-          }}
-        >
+  const ChatRoute = () => {
+    if (isMobile) {
+      return (
+        <>
+          <MobileHeader
+            user={user}
+            onAuthClick={() => setShowAuthModal(true)}
+            onMyBookings={handleMyBookings}
+            onMyProfile={handleMyProfile}
+            onLogout={handleLogout}
+          />
+          <div
+            style={{
+              marginTop: '64px',
+              height: 'calc(100vh - 64px)',
+              width: '100%',
+              backgroundColor: '#060201',
+              backdropFilter: 'blur(24px)',
+              position: 'relative',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden'
+            }}
+          >
+            {/* Chat Messages - Scrollable (ONLY scrollable area) */}
+            <div
+              ref={scrollContainerRef}
+              className="flex-1 overflow-y-auto hide-scrollbar"
+              style={{ 
+                padding: '24px 16px',
+                minHeight: 0,
+                flex: '1',
+                overflowY: 'auto',
+                overflowX: 'hidden'
+              }}
+            >
+              <div className="relative z-10" style={{ width: '100%' }}>
+                <AnimatePresence initial={false}>
+                  {messages.map((message) => (
+                    <motion.div
+                      key={message.id}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2, ease: 'easeOut' }}
+                    >
+                      <ChatMessage
+                        message={message.content}
+                        isUser={message.role === 'user'}
+                        isNew={message.isNew}
+                        requiresAuth={message.requiresAuth}
+                        onAuthClick={() => setShowAuthModal(true)}
+                      />
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+
+                <AnimatePresence>
+                  {isLoading && <TypingIndicator />}
+                </AnimatePresence>
+
+                <AnimatePresence>
+                  {bookingConfirmed && <BookingConfirmed />}
+                </AnimatePresence>
+
+                <AnimatePresence>
+                  {showJets && !isLoading && aircraft.length > 0 && (
+                    <JetSuggestions 
+                      aircraft={aircraft} 
+                      onSelect={handleJetSelect}
+                      onPreview={handleAircraftCardPreview}
+                      navigationIntent={aircraftNavigationIntent}
+                    />
+                  )}
+                </AnimatePresence>
+
+                <div ref={messagesEndRef} style={{ height: '1px' }} />
+              </div>
+            </div>
+            
+            {/* Chat Input - Fixed at bottom (NOT in scroll container) */}
+            <div style={{ 
+              flexShrink: 0,
+              backgroundColor: '#060201', 
+              padding: '16px',
+              paddingBottom: 'max(16px, env(safe-area-inset-bottom))',
+              zIndex: 10
+            }}>
+              <ChatInput 
+                onSend={sendMessage} 
+                disabled={isLoading}
+                placeholder={messages.length === 0 && !sessionId ? "Type your request…" : ""}
+                isMobile={true}
+              />
+            </div>
+          </div>
+
+          {/* Full-Screen Aircraft Modal for Mobile */}
+          <AnimatePresence>
+            {previewAircraft && (
+              <>
+                {/* Backdrop */}
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => setPreviewAircraft(null)}
+                  style={{
+                    position: 'fixed',
+                    inset: 0,
+                    backgroundColor: 'rgba(6, 2, 1, 0.95)',
+                    backdropFilter: 'blur(24px)',
+                    zIndex: 300
+                  }}
+                />
+                {/* Full-Screen Modal */}
+                <motion.div
+                  initial={{ y: '100%' }}
+                  animate={{ y: 0 }}
+                  exit={{ y: '100%' }}
+                  transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                  style={{
+                    position: 'fixed',
+                    inset: 0,
+                    backgroundColor: 'rgba(21, 21, 21, 0.98)',
+                    backdropFilter: 'blur(24px)',
+                    zIndex: 301,
+                    overflowY: 'auto',
+                    display: 'flex',
+                    flexDirection: 'column'
+                  }}
+                >
+                  {/* Close Button */}
+                  <div style={{ padding: '20px', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
+                    <button
+                      onClick={() => setPreviewAircraft(null)}
+                      style={{
+                        width: '40px',
+                        height: '40px',
+                        borderRadius: '12px',
+                        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        color: 'white',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </button>
+                  </div>
+
+                  {/* Scrollable Content */}
+                  <div className="flex-1 overflow-y-auto" style={{ padding: '0 24px', paddingBottom: '100px' }}>
+                    {/* Aircraft Name */}
+                    <h2 style={{
+                      fontSize: '28px',
+                      fontWeight: 400,
+                      color: '#FFFFFF',
+                      marginBottom: '24px',
+                      fontFamily: 'Cormorant Garamond, serif',
+                      textAlign: 'center'
+                    }}>
+                      {previewAircraft.name}
+                    </h2>
+
+                    {/* Hero Image */}
+                    <div style={{ width: '100%', height: '240px', borderRadius: '16px', overflow: 'hidden', marginBottom: '24px' }}>
+                      <img
+                        src={previewAircraft.image_url || previewAircraft.image}
+                        alt={previewAircraft.name}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover'
+                        }}
+                        onError={(e) => {
+                          e.target.style.display = 'none'
+                        }}
+                      />
+                    </div>
+
+                    {/* Stats Row */}
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(2, 1fr)',
+                      gap: '16px',
+                      marginBottom: '24px',
+                      paddingBottom: '24px',
+                      borderBottom: '1px solid rgba(255, 255, 255, 0.1)'
+                    }}>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '20px', fontWeight: 500, color: '#FFFFFF', marginBottom: '8px' }}>
+                          {previewAircraft.capacity || 'N/A'}
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.5)' }}>
+                          Passengers
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '20px', fontWeight: 500, color: '#FFFFFF', marginBottom: '8px' }}>
+                          {previewAircraft.range_nm ? `${convertRangeToKm(previewAircraft.range_nm).toLocaleString()} km` : 'N/A'}
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.5)' }}>
+                          Range
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '20px', fontWeight: 500, color: '#FFFFFF', marginBottom: '8px' }}>
+                          {calculateFlightTime(previewAircraft, leadState?.route_from, leadState?.route_to) || '~10 hrs'}
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.5)' }}>
+                          Flight Time
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '20px', fontWeight: 500, color: '#FFFFFF', marginBottom: '8px' }}>
+                          {previewAircraft.speed_kph ? `${previewAircraft.speed_kph} km/h` : 'N/A'}
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.5)' }}>
+                          Speed
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Description */}
+                    {previewAircraft.description && (
+                      <p style={{
+                        fontSize: '15px',
+                        lineHeight: '1.6',
+                        color: 'rgba(255, 255, 255, 0.7)',
+                        marginBottom: '24px'
+                      }}>
+                        {previewAircraft.description}
+                      </p>
+                    )}
+
+                    {/* Interior Images */}
+                    {previewAircraft.interior_images && previewAircraft.interior_images.length > 0 && (
+                      <div style={{ marginBottom: '24px' }}>
+                        <div style={{
+                          display: 'grid',
+                          gridTemplateColumns: '2fr 1fr',
+                          gap: '12px',
+                          marginBottom: '16px'
+                        }}>
+                          <div style={{
+                            width: '100%',
+                            height: '200px',
+                            borderRadius: '12px',
+                            overflow: 'hidden'
+                          }}>
+                            <img
+                              src={previewAircraft.interior_images[0]}
+                              alt="Interior"
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'cover'
+                              }}
+                              onError={(e) => {
+                                e.target.style.display = 'none'
+                              }}
+                            />
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            {previewAircraft.interior_images.slice(1, 3).map((img, index) => (
+                              <div
+                                key={`interior-${previewAircraft.id}-${index + 1}`}
+                                style={{
+                                  width: '100%',
+                                  height: '94px',
+                                  borderRadius: '12px',
+                                  overflow: 'hidden'
+                                }}
+                              >
+                                <img
+                                  src={img}
+                                  alt={`Interior ${index + 2}`}
+                                  style={{
+                                    width: '100%',
+                                    height: '100%',
+                                    objectFit: 'cover'
+                                  }}
+                                  onError={(e) => {
+                                    e.target.style.display = 'none'
+                                  }}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        {previewAircraft.interior_images.length > 0 && (
+                          <button
+                            onClick={() => setShowPhotoGallery(true)}
+                            style={{
+                              width: '100%',
+                              padding: '12px 20px',
+                              backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                              border: '1px solid rgba(255, 255, 255, 0.1)',
+                              borderRadius: '12px',
+                              color: 'rgba(255, 255, 255, 0.9)',
+                              fontSize: '14px',
+                              fontWeight: 500,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            All Photos ({previewAircraft.interior_images.length})
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Fixed Select Button at Bottom */}
+                  <div style={{
+                    position: 'sticky',
+                    bottom: 0,
+                    padding: '24px',
+                    backgroundColor: 'rgba(21, 21, 21, 0.98)',
+                    backdropFilter: 'blur(24px)',
+                    borderTop: '1px solid rgba(255, 255, 255, 0.1)',
+                    flexShrink: 0
+                  }}>
+                    <button
+                      onClick={() => {
+                        handleJetSelect({
+                          type: "AIRCRAFT_SELECTED",
+                          selected_aircraft: {
+                            id: previewAircraft.id,
+                            name: previewAircraft.name
+                          }
+                        })
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '16px 24px',
+                        backgroundColor: '#FFFFFF',
+                        color: '#0a0a0a',
+                        borderRadius: '12px',
+                        fontSize: '16px',
+                        fontWeight: 500,
+                        border: 'none',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Select this aircraft
+                    </button>
+                  </div>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+
+          <AuthModal
+            isOpen={showAuthModal}
+            onClose={handleAuthClose}
+            onSuccess={handleAuthSuccess}
+            externalError={authBlockingError}
+          />
+
+          <PhotoGalleryModal
+            isOpen={showPhotoGallery}
+            images={previewAircraft?.interior_images || []}
+            onClose={() => setShowPhotoGallery(false)}
+            aircraftName={previewAircraft?.name || ''}
+          />
+        </>
+      )
+    }
+
+    return (
+      <>
+        <div className="h-screen bg-jet-950" style={{ position: 'relative' }}>
+          {/* Sidebar - fixed position, out of flow */}
+          <Sidebar 
+            activeView="chat" 
+            onNavigate={(viewName) => {
+              if (viewName === 'landing') navigate('/')
+              if (viewName === 'chat') navigate('/chat')
+              if (viewName === 'bookings') handleMyBookings()
+              if (viewName === 'profile') handleMyProfile()
+            }}
+            onAuthClick={() => setShowAuthModal(true)}
+            onMyBookings={handleMyBookings}
+            onMyProfile={handleMyProfile}
+            onLogout={handleLogout}
+            user={user}
+          />
+          
+          {/* Shared background container matching landing page - starts exactly at 103px */}
+          <div
+            style={{
+              marginLeft: '103px',
+              width: 'calc(100% - 103px)',
+              height: '100vh',
+              backgroundColor: '#060201',
+              backdropFilter: 'blur(24px)',
+              position: 'relative'
+            }}
+          >
           {/* Chat Layout Container - Static layout, no animations */}
           <div 
             className="relative" 
@@ -1188,16 +1633,19 @@ export default function App() {
         aircraftName={previewAircraft?.name || ''}
       />
     </>
-  )
+    )
+  }
 
   // Main Routes
   return (
-    <Routes>
-      <Route path="/" element={<LandingRoute />} />
-      <Route path="/chat" element={<ChatRoute />} />
-      <Route path="/chat/session/:session_id" element={<ChatRoute />} />
-      <Route path="/my-bookings" element={<MyBookingsRoute />} />
-      <Route path="/profile" element={<MyProfileRoute />} />
-    </Routes>
+    <div style={isMobile ? { height: '100vh', overflow: 'hidden', width: '100%' } : {}}>
+      <Routes>
+        <Route path="/" element={<LandingRoute />} />
+        <Route path="/chat" element={<ChatRoute />} />
+        <Route path="/chat/session/:session_id" element={<ChatRoute />} />
+        <Route path="/my-bookings" element={<MyBookingsRoute />} />
+        <Route path="/profile" element={<MyProfileRoute />} />
+      </Routes>
+    </div>
   )
 }

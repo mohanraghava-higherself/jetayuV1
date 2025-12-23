@@ -1,14 +1,12 @@
 """
 Email Service
 Sends notifications to operators when a booking request is made.
+Uses Resend API (HTTP-based) instead of SMTP.
 Runs in background with automatic retries.
 """
 
-import smtplib
-import asyncio
+import httpx
 import threading
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from typing import List, Optional
 from datetime import datetime
 from app.config import settings
@@ -19,29 +17,47 @@ class EmailService:
     """
     Handles sending email notifications to the operations team.
     Supports background sending with retries.
+    Uses Resend API for reliable email delivery.
     """
     
     MAX_RETRIES = 3
     RETRY_DELAYS = [5, 15, 30]  # seconds between retries
+    RESEND_API_URL = "https://api.resend.com/emails"
     
     def __init__(self):
-        self.smtp_host = settings.SMTP_HOST
-        self.smtp_port = settings.SMTP_PORT
-        self.smtp_user = settings.SMTP_USER
-        self.smtp_password = settings.SMTP_PASSWORD
+        self.resend_api_key = settings.RESEND_API_KEY
         self.from_email = settings.FROM_EMAIL
         self.operator_emails = settings.OPERATOR_EMAILS
         
+        # CRITICAL: Verify API key is loaded correctly
+        import os
+        raw_key = os.getenv("RESEND_API_KEY", "")
+        if raw_key:
+            print(f"✅ RESEND_API_KEY loaded: {raw_key[:10]}...{raw_key[-4:] if len(raw_key) > 14 else '***'} (length: {len(raw_key)})")
+            if not raw_key.startswith("re_"):
+                print("⚠️  WARNING: RESEND_API_KEY should start with 're_'")
+        else:
+            print("❌ RESEND_API_KEY is missing or empty!")
+        
         # Check if email is configured
         self._configured = all([
-            self.smtp_host,
-            self.smtp_user,
-            self.smtp_password,
+            self.resend_api_key,
+            self.from_email,
             self.operator_emails
         ])
         
         if not self._configured:
             print("⚠️  Email service not configured - notifications will be logged only")
+            if not self.resend_api_key:
+                print("   Missing RESEND_API_KEY environment variable")
+            if not self.operator_emails:
+                print("   Missing OPERATOR_EMAILS environment variable")
+        
+        # Ensure FROM_EMAIL uses Resend's default domain for unverified accounts
+        if self.from_email and "resend.dev" not in self.from_email:
+            print(f"⚠️  FROM_EMAIL is set to '{self.from_email}' - ensure this domain is verified in Resend")
+            print("   Using 'onboarding@resend.dev' for unverified domains")
+            # Don't override, but warn - user should verify their domain
     
     def send_booking_notification_background(
         self,
@@ -100,13 +116,13 @@ class EmailService:
             
             for attempt in range(self.MAX_RETRIES):
                 try:
-                    self._send_email(
+                    response_id = self._send_email(
                         to_email=operator_email,
                         subject=subject,
                         html_content=html_content,
                         text_content=text_content
                     )
-                    print(f"✅ Booking notification sent to {operator_email}")
+                    print(f"✅ Booking notification sent to {operator_email} (Resend ID: {response_id})")
                     success = True
                     break
                 except Exception as e:
@@ -150,13 +166,13 @@ class EmailService:
         success = True
         for operator_email in self.operator_emails:
             try:
-                self._send_email(
+                response_id = self._send_email(
                     to_email=operator_email,
                     subject=subject,
                     html_content=html_content,
                     text_content=text_content
                 )
-                print(f"✅ Booking notification sent to {operator_email}")
+                print(f"✅ Booking notification sent to {operator_email} (Resend ID: {response_id})")
             except Exception as e:
                 print(f"❌ Failed to send to {operator_email}: {e}")
                 success = False
@@ -169,24 +185,82 @@ class EmailService:
         subject: str,
         html_content: str,
         text_content: str
-    ) -> None:
-        """Send an email using SMTP."""
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = self.from_email
-        msg["To"] = to_email
+    ) -> str:
+        """
+        Send an email using Resend API.
+        Returns the Resend response ID on success.
+        Raises exception on failure.
+        """
+        if not self.resend_api_key:
+            raise ValueError("RESEND_API_KEY is not configured")
         
-        # Attach both plain text and HTML versions
-        part1 = MIMEText(text_content, "plain")
-        part2 = MIMEText(html_content, "html")
-        msg.attach(part1)
-        msg.attach(part2)
+        # CRITICAL: Use exact sender format for Resend
+        # For onboarding@resend.dev (default), use just the email
+        # For verified domains, can use "Name <email@domain.com>" format
+        if "resend.dev" in self.from_email:
+            # Use simple email format for Resend's default domain
+            from_email_formatted = self.from_email
+        else:
+            # For custom verified domains, use formatted name
+            from_email_formatted = f"Jetayu <{self.from_email}>"
         
-        # Send via SMTP with timeout
-        with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=30) as server:
-            server.starttls()
-            server.login(self.smtp_user, self.smtp_password)
-            server.sendmail(self.from_email, to_email, msg.as_string())
+        # Prepare request payload
+        payload = {
+            "from": from_email_formatted,
+            "to": [to_email],
+            "subject": subject,
+            "html": html_content,
+            "text": text_content,
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {self.resend_api_key}",
+            "Content-Type": "application/json",
+        }
+        
+        # Send request to Resend API
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(
+                    self.RESEND_API_URL,
+                    json=payload,
+                    headers=headers,
+                )
+                
+                # Log full response on error for debugging
+                if response.status_code >= 400:
+                    error_body = ""
+                    try:
+                        error_body = response.text
+                    except:
+                        error_body = "Could not read error response"
+                    
+                    print(f"❌ Resend API Error {response.status_code}:")
+                    print(f"   URL: {self.RESEND_API_URL}")
+                    print(f"   From: {from_email_formatted}")
+                    print(f"   To: {to_email}")
+                    print(f"   Response: {error_body}")
+                    
+                    # Raise with detailed error
+                    response.raise_for_status()
+                
+                # Parse response
+                response_data = response.json()
+                response_id = response_data.get("id", "unknown")
+                
+                return response_id
+        except httpx.HTTPStatusError as e:
+            # Enhanced error logging
+            error_body = ""
+            if hasattr(e.response, 'text'):
+                try:
+                    error_body = e.response.text
+                except:
+                    pass
+            
+            print(f"❌ Resend HTTP Error {e.response.status_code}:")
+            print(f"   Response body: {error_body}")
+            raise
     
     def _build_booking_email_html(
         self,
@@ -334,3 +408,74 @@ class EmailServiceProxy:
 
 
 email_service = EmailServiceProxy()
+
+
+# Test function to verify Resend configuration on startup
+def test_resend_connection():
+    """
+    Test Resend API connection with a minimal email.
+    Called once on app startup to verify configuration.
+    """
+    import os
+    api_key = os.getenv("RESEND_API_KEY", "")
+    
+    if not api_key:
+        print("⚠️  Skipping Resend test - RESEND_API_KEY not set")
+        return False
+    
+    if not api_key.startswith("re_"):
+        print("⚠️  Skipping Resend test - API key format invalid (should start with 're_')")
+        print(f"   Got: {api_key[:20]}...")
+        return False
+    
+    # Get test recipient from env or use a default
+    test_recipient = os.getenv("RESEND_TEST_EMAIL", "delivered@resend.dev")
+    
+    try:
+        # Use Resend's default domain for testing - exact format required
+        test_payload = {
+            "from": "onboarding@resend.dev",  # Must be exactly this for unverified accounts
+            "to": [test_recipient],
+            "subject": "Resend API Test - Jetayu",
+            "html": "<p>This is a test email from Jetayu to verify Resend API configuration.</p>",
+            "text": "This is a test email from Jetayu to verify Resend API configuration.",
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        
+        print(f"   Testing with: from=onboarding@resend.dev, to={test_recipient}")
+        
+        with httpx.Client(timeout=10.0) as client:
+            response = client.post(
+                "https://api.resend.com/emails",
+                json=test_payload,
+                headers=headers,
+            )
+            
+            if response.status_code in [200, 201, 202]:
+                response_data = response.json()
+                print(f"✅ Resend API test successful! Response ID: {response_data.get('id', 'unknown')}")
+                return True
+            else:
+                print(f"❌ Resend API test failed: HTTP {response.status_code}")
+                try:
+                    error_data = response.json()
+                    print(f"   Error details: {error_data}")
+                except:
+                    print(f"   Response body: {response.text[:200]}")
+                return False
+                
+    except httpx.HTTPStatusError as e:
+        print(f"❌ Resend API test HTTP error: {e.response.status_code}")
+        try:
+            error_data = e.response.json()
+            print(f"   Error details: {error_data}")
+        except:
+            print(f"   Response body: {e.response.text[:200]}")
+        return False
+    except Exception as e:
+        print(f"❌ Resend API test error: {type(e).__name__}: {e}")
+        return False

@@ -29,11 +29,11 @@ class Settings:
         return ["http://localhost:5173", "http://127.0.0.1:5173"]
 
     # Email Configuration (for operator notifications)
-    SMTP_HOST: str = os.getenv("SMTP_HOST", "")
-    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
-    SMTP_USER: str = os.getenv("SMTP_USER", "")
-    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
-    FROM_EMAIL: str = os.getenv("FROM_EMAIL", "concierge@jetayu.com")
+    # Resend API (replaces SMTP)
+    RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
+    # CRITICAL: Use onboarding@resend.dev for unverified accounts
+    # Only change this if you've verified a custom domain in Resend dashboard
+    FROM_EMAIL: str = os.getenv("FROM_EMAIL", "onboarding@resend.dev")
     
     # Operator emails (comma-separated in env)
     @property

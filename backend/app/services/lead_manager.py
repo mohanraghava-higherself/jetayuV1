@@ -279,6 +279,12 @@ class LeadManager:
         explicit_full_name = user.get("full_name")
         
         lead = self.get_lead(session_id)
+        
+        # If lead doesn't exist, return early (can't attach user to non-existent lead)
+        if lead is None:
+            logger.warning(f"Cannot attach user to lead: lead not found for session_id={session_id}")
+            return self.get_lead(session_id)
+        
         update_data = {}
         
         # Check if user_id is already set in DB
@@ -373,6 +379,12 @@ class LeadManager:
         
         # Fetch lead again to get user_id from DB
         updated_lead = self.get_lead(session_id)
+        
+        # Safety check: if lead still doesn't exist after update, return None
+        if updated_lead is None:
+            logger.warning(f"Lead still not found after update for session_id={session_id}")
+            return None
+        
         try:
             result = (
                 self.db.table("leads")

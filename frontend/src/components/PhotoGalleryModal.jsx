@@ -11,6 +11,18 @@ export default function PhotoGalleryModal({ isOpen, images, onClose, aircraftNam
     }
   }, [isOpen])
 
+  // Prevent body scroll when modal is open
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [isOpen])
+
   // Handle keyboard navigation
   useEffect(() => {
     if (!isOpen) return
@@ -55,6 +67,7 @@ export default function PhotoGalleryModal({ isOpen, images, onClose, aircraftNam
               position: 'fixed',
               inset: 0,
               backgroundColor: 'rgba(0, 0, 0, 0.9)',
+              backdropFilter: 'blur(24px)',
               zIndex: 9999,
               display: 'flex',
               alignItems: 'center',

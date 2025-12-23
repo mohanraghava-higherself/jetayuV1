@@ -92,8 +92,19 @@ export default function MyProfile({ onBack, user, onAuthClick, onMyBookings, onM
     navigate('/')
   }
 
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768)
+    }
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
+
   return (
-    <div className="flex-1 ml-16 flex flex-col min-h-screen">
+    <div className={`flex-1 ${isMobile ? '' : 'ml-16'} flex flex-col min-h-screen`}>
       <main className="flex-1 overflow-y-auto w-full">
           <div className="max-w-2xl mx-auto px-8 py-12">
             {/* Title */}

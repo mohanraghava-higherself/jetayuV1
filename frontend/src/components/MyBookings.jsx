@@ -53,12 +53,164 @@ const getAircraftImageUrl = (aircraftName) => {
   return null
 }
 
+// BookingDetailsPanel Component - Separate component to avoid hooks order issues
+function BookingDetailsPanel({ booking, onClose, isMobile }) {
+  const getBookingStatus = (status) => {
+    return { text: 'Booking Requested', color: 'text-amber-400' }
+  }
+
+  const content = (
+    <div className="p-8 overflow-y-auto flex-1">
+      {/* Header */}
+      <div className="mb-8">
+        <h2 className="font-display text-2xl font-light text-jet-100 mb-4">Booking Details</h2>
+        
+        {/* Aircraft Name */}
+        <div className="mb-4">
+          <p className="text-lg font-light text-jet-200">
+            {booking.selected_aircraft}
+          </p>
+        </div>
+
+        {/* Route */}
+        <div className="mb-4">
+          <p className="text-sm text-jet-400 mb-1">Route</p>
+          <p className="text-base text-jet-100">
+            {booking.route_from || 'N/A'} → {booking.route_to || 'N/A'}
+          </p>
+        </div>
+
+        {/* Status Badge */}
+        <div className="mb-6">
+          {(() => {
+            const status = getBookingStatus(booking.status)
+            return (
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-jet-800/50 border border-jet-700/50">
+                <div className={`w-2 h-2 rounded-full ${status.color.replace('text-', 'bg-')}`} />
+                <span className={`text-xs ${status.color}`}>{status.text}</span>
+              </div>
+            )
+          })()}
+        </div>
+      </div>
+
+      {/* Body - WIP Placeholder */}
+      <div className="border-t border-jet-800/50 pt-8">
+        <div className="text-center py-12">
+          <div className="w-16 h-16 rounded-full bg-purple-500/20 flex items-center justify-center mx-auto mb-4">
+            <span className="text-2xl font-bold text-purple-400">WIP</span>
+          </div>
+          <p className="text-sm text-jet-400 mb-2">Booking details are being prepared.</p>
+          <p className="text-xs text-jet-500">Our team is reviewing your request.</p>
+        </div>
+      </div>
+    </div>
+  )
+
+  if (isMobile) {
+    // Full-screen modal for mobile
+    return (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 300
+        }}
+      >
+        {/* Backdrop */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            backgroundColor: 'rgba(6, 2, 1, 0.95)',
+            backdropFilter: 'blur(24px)'
+          }}
+        />
+        {/* Full-Screen Modal */}
+        <motion.div
+          initial={{ y: '100%' }}
+          animate={{ y: 0 }}
+          exit={{ y: '100%' }}
+          transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            backgroundColor: 'rgba(21, 21, 21, 0.98)',
+            backdropFilter: 'blur(24px)',
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column'
+          }}
+        >
+          {/* Close Button */}
+          <div style={{ padding: '20px', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
+            <button
+              onClick={onClose}
+              style={{
+                width: '40px',
+                height: '40px',
+                borderRadius: '12px',
+                backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                color: 'white',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+          </div>
+          {content}
+        </motion.div>
+      </motion.div>
+    )
+  }
+
+  // Desktop side panel
+  return (
+    <motion.aside
+      initial={{ x: '100%', opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      exit={{ x: '100%', opacity: 0 }}
+      transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+      className="w-96 bg-jet-900/60 backdrop-blur-md border-l border-jet-800/50 flex flex-col h-full"
+    >
+      {content}
+    </motion.aside>
+  )
+}
+
 export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, onMyProfile, onLogout, onStartNewBooking }) {
+  const navigate = useNavigate()
+  
+  // ALL HOOKS MUST BE DECLARED AT TOP LEVEL - BEFORE ANY CONDITIONAL RETURNS
   const [bookings, setBookings] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [selectedBookingId, setSelectedBookingId] = useState(null)
+  const [isMobile, setIsMobile] = useState(false)
+
+  // Mobile detection hook
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768)
+    }
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
 
   useEffect(() => {
     // Route protection: Check if user is authenticated
@@ -84,6 +236,18 @@ export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, on
     checkAuth()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Prevent body scroll when mobile modal is open
+  useEffect(() => {
+    if (isMobile && selectedBookingId) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [isMobile, selectedBookingId])
 
   const loadBookings = async () => {
     try {
@@ -192,7 +356,7 @@ export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, on
   }
 
   return (
-    <div className="flex-1 ml-16 flex h-screen overflow-hidden">
+    <div className={`flex-1 ${isMobile ? '' : 'ml-16'} flex h-screen overflow-hidden`}>
         {/* Bookings List */}
         <main className="flex-1 overflow-y-auto h-full">
           <div className="max-w-4xl mx-auto px-8 py-12">
@@ -382,80 +546,11 @@ export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, on
         {/* Booking Details Panel */}
         <AnimatePresence>
           {selectedBooking && (
-            <motion.aside
-              initial={{ x: '100%', opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: '100%', opacity: 0 }}
-              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="w-96 bg-jet-900/60 backdrop-blur-md border-l border-jet-800/50 flex flex-col h-full"
-            >
-              <div className="p-8 overflow-y-auto flex-1">
-                {/* Header */}
-                <div className="mb-8">
-                  <h2 className="font-display text-2xl font-light text-jet-100 mb-4">Booking Details</h2>
-                  
-                  {/* Aircraft Name */}
-                  <div className="mb-4">
-                    <p className="text-lg font-light text-jet-200">
-                      {selectedBooking.selected_aircraft}
-                    </p>
-                  </div>
-
-                  {/* Route */}
-                  <div className="mb-4">
-                    <p className="text-sm text-jet-400 mb-1">Route</p>
-                    <p className="text-base text-jet-100">
-                      {selectedBooking.route_from || 'N/A'} → {selectedBooking.route_to || 'N/A'}
-                    </p>
-                  </div>
-
-                  {/* Status Badge */}
-                  <div className="mb-6">
-                    {(() => {
-                      const status = getBookingStatus(selectedBooking.status)
-                      return (
-                        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-jet-800/50 border border-jet-700/50">
-                          <div className={`w-2 h-2 rounded-full ${status.color.replace('text-', 'bg-')}`} />
-                          <span className={`text-xs ${status.color}`}>{status.text}</span>
-                        </div>
-                      )
-                    })()}
-                  </div>
-                </div>
-
-                {/* Body - WIP Placeholder */}
-                <div className="border-t border-jet-800/50 pt-8">
-                  <div className="text-center py-12">
-                    <div className="w-16 h-16 rounded-full bg-purple-500/20 flex items-center justify-center mx-auto mb-4">
-                      <span className="text-2xl font-bold text-purple-400">WIP</span>
-                    </div>
-                    <p className="text-sm text-jet-400 mb-2">Booking details are being prepared.</p>
-                    <p className="text-xs text-jet-500">Our team is reviewing your request.</p>
-                  </div>
-
-                  {/* Future Fields Structure (commented for reference) */}
-                  {/* 
-                  <div className="space-y-6">
-                    <div>
-                      <p className="text-sm text-jet-400 mb-2">Contact Information</p>
-                      <p className="text-base text-jet-100">{selectedBooking.name}</p>
-                      <p className="text-sm text-jet-300">{selectedBooking.email}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-jet-400 mb-2">Passengers</p>
-                      <p className="text-base text-jet-100">{selectedBooking.pax || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-jet-400 mb-2">Date & Time</p>
-                      <p className="text-base text-jet-100">
-                        {selectedBooking.date_time ? new Date(selectedBooking.date_time).toLocaleString() : 'N/A'}
-                      </p>
-                    </div>
-                  </div>
-                  */}
-                </div>
-              </div>
-            </motion.aside>
+            <BookingDetailsPanel
+              booking={selectedBooking}
+              onClose={() => setSelectedBookingId(null)}
+              isMobile={isMobile}
+            />
           )}
         </AnimatePresence>
     </div>
