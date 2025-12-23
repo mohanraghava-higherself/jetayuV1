@@ -1,12 +1,15 @@
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+import json
 
 
 # Request schemas
 class ChatRequest(BaseModel):
     session_id: str
     message: str
+    type: Optional[str] = None  # "AIRCRAFT_SELECTED" for structured payloads
+    selected_aircraft: Optional[Dict[str, str]] = None  # {id: str, name: str} when type is AIRCRAFT_SELECTED
 
 
 # Response schemas
@@ -52,12 +55,14 @@ class AircraftSuggestion(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    session_id: str  # Session ID (returned so frontend can track it)
     assistant_message: str
     lead_state: LeadState
     missing_fields: List[str]
     # Aircraft suggestions - only included when appropriate
     show_aircraft: bool = False
     aircraft: Optional[List[AircraftSuggestion]] = None
+    aircraft_navigation_intent: Optional[str] = None  # "AIRCRAFT_BIGGER", "AIRCRAFT_SMALLER", "AIRCRAFT_RECOMMENDED", "AIRCRAFT_PREVIOUS"
     # Booking confirmation
     booking_confirmed: bool = False  # True when user proceeds to book AND auth successful
     requires_auth: bool = False  # True when booking requires authentication (blocks confirmation)

@@ -68,16 +68,14 @@ body {
   scroll-behavior: smooth;
 }
 
-/* Hide scrollbar on mobile but keep functionality */
-@media (max-width: 768px) {
-  .hide-scrollbar {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
-  
-  .hide-scrollbar::-webkit-scrollbar {
-    display: none;
-  }
+/* Hide scrollbar but keep functionality */
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 /* Focus styles */

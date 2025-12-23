@@ -12,10 +12,12 @@ Lead Status Flow:
 from app.database import get_db
 from app.models.schemas import LeadState
 from app.config import settings
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import uuid
 import logging
 import httpx
+import json
+from httpx import HTTPStatusError
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +43,11 @@ class LeadManager:
 
         return session_id
 
-    def get_lead(self, session_id: str) -> LeadState:
-        """Retrieve current lead state from database."""
+    def get_lead(self, session_id: str) -> Optional[LeadState]:
+        """
+        Retrieve current lead state from database.
+        Returns None when lead cannot be fetched (e.g., RLS 406 or missing row).
+        """
         try:
             result = (
                 self.db.table("leads")
@@ -51,29 +56,44 @@ class LeadManager:
                 .single()
                 .execute()
             )
-
-            if result.data:
-                return LeadState(
-                    name=result.data.get("name"),
-                    email=result.data.get("email"),
-                    date_time=result.data.get("date_time"),
-                    route_from=result.data.get("route_from"),
-                    route_to=result.data.get("route_to"),
-                    pax=result.data.get("pax"),
-                    special_requests=result.data.get("special_requests") or [],
-                    selected_aircraft=result.data.get("selected_aircraft"),
-                    status=result.data.get("status") or "draft",
-                    submission_state=result.data.get("submission_state") or "collecting",
-                    user_id=result.data.get("user_id"),
-                )
+        except HTTPStatusError as e:
+            # RLS or no row -> return None so caller can create lead
+            logger.warning(f"Lead fetch blocked or missing for session_id={session_id}: {e}")
+            return None
         except Exception as e:
-            print(f"⚠️  Error fetching lead: {e}")
+            logger.warning(f"Lead fetch failed for session_id={session_id}: {e}")
+            return None
 
+        if not result or not result.data:
+            return None
+
+        data = result.data
+        return LeadState(
+            name=data.get("name"),
+            email=data.get("email"),
+            date_time=data.get("date_time"),
+            route_from=data.get("route_from"),
+            route_to=data.get("route_to"),
+            pax=data.get("pax"),
+            special_requests=data.get("special_requests") or [],
+            selected_aircraft=data.get("selected_aircraft"),
+            status=data.get("status") or "draft",
+            submission_state=data.get("submission_state") or "collecting",
+            user_id=data.get("user_id"),
+        )
+
+    def create_lead_with_session(self, session_id: str) -> LeadState:
+        """Create a lead row for an existing session_id if not present."""
+        try:
+            self.db.table("leads").insert({"session_id": session_id}).execute()
+        except Exception as e:
+            logger.warning(f"Could not create lead for session_id={session_id}: {e}")
         return LeadState(submission_state="collecting")
 
-    def update_lead(self, session_id: str, updates: LeadState) -> LeadState:
+    def update_lead(self, session_id: str, updates: dict) -> LeadState:
         """
         Apply updates to lead record.
+        Accepts dict-based updates only for flexibility.
         Only updates fields that have new values.
         Special requests are appended, not replaced.
         """
@@ -86,32 +106,55 @@ class LeadManager:
         # Authenticated leads have authoritative identity from auth system
         if not current.user_id:
             # Anonymous lead → allow name/email updates from LLM extraction
-            if updates.name and updates.name != current.name:
-                update_data["name"] = updates.name
+            if "name" in updates and updates.get("name") and updates["name"] != current.name:
+                update_data["name"] = updates["name"]
 
-            if updates.email and updates.email != current.email:
-                update_data["email"] = updates.email
+            if "email" in updates and updates.get("email") and updates["email"] != current.email:
+                update_data["email"] = updates["email"]
         # else: authenticated lead → skip name/email updates (identity is authoritative)
 
-        if updates.date_time and updates.date_time != current.date_time:
-            update_data["date_time"] = updates.date_time
+        if "date_time" in updates and updates.get("date_time") and updates["date_time"] != current.date_time:
+            update_data["date_time"] = updates["date_time"]
 
-        if updates.route_from and updates.route_from != current.route_from:
-            update_data["route_from"] = updates.route_from
+        if "route_from" in updates and updates.get("route_from") and updates["route_from"] != current.route_from:
+            update_data["route_from"] = updates["route_from"]
 
-        if updates.route_to and updates.route_to != current.route_to:
-            update_data["route_to"] = updates.route_to
+        if "route_to" in updates and updates.get("route_to") and updates["route_to"] != current.route_to:
+            update_data["route_to"] = updates["route_to"]
 
-        if updates.pax and updates.pax != current.pax:
-            update_data["pax"] = updates.pax
+        if "pax" in updates and updates.get("pax") is not None and updates["pax"] != current.pax:
+            update_data["pax"] = updates["pax"]
 
-        if updates.selected_aircraft and updates.selected_aircraft != current.selected_aircraft:
-            update_data["selected_aircraft"] = updates.selected_aircraft
+        # Handle selected_aircraft - CRITICAL: IMMUTABILITY RULE
+        # Once selected_aircraft is set, it is IMMUTABLE unless explicitly cleared (None) or force-overwritten.
+        # This prevents accidental overwrites from LLM extraction or auto-selection
+        if "selected_aircraft" in updates:
+            new_value = updates["selected_aircraft"]
+            # Allow update if:
+            # 1. Currently None (no selection) - allow setting
+            # 2. New value is None (explicit clearing) - allow clearing
+            if new_value != current.selected_aircraft:
+                if current.selected_aircraft is None or new_value is None:
+                    update_data["selected_aircraft"] = new_value
+                else:
+                    # Preserve existing selection; overwrite only via force path
+                    print(f"🔒 IMMUTABILITY: Cannot overwrite selected aircraft '{current.selected_aircraft}' with '{new_value}' (use force in set_selected_aircraft)")
+
+        # Handle phone if present
+        if "phone" in updates and updates.get("phone") and updates["phone"] != getattr(current, "phone", None):
+            update_data["phone"] = updates["phone"]
+
+        # NOTE: aircraft_history and current_aircraft_index removed - no longer used
 
         # Append new special requests
-        if updates.special_requests:
+        if "special_requests" in updates and updates.get("special_requests"):
             existing = list(current.special_requests or [])
-            new_requests = [r for r in updates.special_requests if r not in existing]
+            new_requests = updates["special_requests"]
+            # Handle both list and single string
+            if isinstance(new_requests, str):
+                new_requests = [new_requests]
+            # Filter out duplicates
+            new_requests = [r for r in new_requests if r not in existing]
             if new_requests:
                 combined = existing + new_requests
                 update_data["special_requests"] = combined
@@ -165,6 +208,9 @@ class LeadManager:
         Mark the lead as confirmed (user wants to proceed with booking).
         Allows confirmation when submission_state indicates user is authenticated
         or has progressed past initial collection.
+        
+        NOTE: Auto-selection should happen BEFORE calling this method.
+        This method will fail if selected_aircraft is None (defensive check).
         """
         # Get current lead to check submission_state
         current_lead = self.get_lead(session_id)
@@ -174,8 +220,14 @@ class LeadManager:
             print(f"⚠️  Cannot confirm booking: user_id is required")
             return current_lead
 
+        # Defensive check: selected_aircraft should be set by caller
+        # (Auto-selection happens in chat.py before calling this method)
+        if not current_lead.selected_aircraft:
+            print(f"⚠️  Cannot confirm booking: selected_aircraft is NULL (should be auto-selected before confirmation)")
+            return current_lead
+
         # Allow confirmation if submission_state shows progress beyond collecting
-        allowed_states = ['awaiting_auth', 'collecting']
+        allowed_states = ['awaiting_auth', 'collecting', 'details_confirmed']
         if current_lead.submission_state not in allowed_states:
             print(f"⚠️  Cannot confirm booking: submission_state is '{current_lead.submission_state}', expected one of {allowed_states}")
             return current_lead
@@ -188,7 +240,7 @@ class LeadManager:
         
         try:
             self.db.table("leads").update(update_data).eq("session_id", session_id).execute()
-            print(f"✅ Booking confirmed with user_id: {user_id}")
+            print(f"✅ Booking confirmed with user_id: {user_id}, aircraft: {current_lead.selected_aircraft}")
         except Exception as e:
             print(f"⚠️  Could not update status: {e}")
         
@@ -339,17 +391,47 @@ class LeadManager:
         
         return updated_lead
 
-    def set_selected_aircraft(self, session_id: str, aircraft_name: str) -> LeadState:
-        """Update the selected aircraft for a lead."""
+    def set_selected_aircraft(self, session_id: str, aircraft_name: str, force: bool = False) -> LeadState:
+        """
+        Update the selected aircraft for a lead.
+        CRITICAL: IMMUTABILITY RULE - once set, selected_aircraft cannot be overwritten unless force=True.
+        
+        Args:
+            session_id: Lead session ID
+            aircraft_name: Aircraft name to set
+            force: If True, overwrite even if already set (default: False - enforces immutability)
+        """
+        if not aircraft_name:
+            print(f"⚠️  Cannot set selected_aircraft: aircraft_name is empty")
+            return self.get_lead(session_id)
+        
+        # CRITICAL: IMMUTABILITY - Never overwrite selected_aircraft once set (unless force=True)
+        # This ensures user selection via structured payload is NEVER overwritten
+        current_lead = self.get_lead(session_id)
+        if current_lead.selected_aircraft and not force:
+            print(f"🔒 IMMUTABILITY: Cannot overwrite selected_aircraft '{current_lead.selected_aircraft}' with '{aircraft_name}' (use force=True for structured payload)")
+            return current_lead
+        
         try:
-            self.db.table("leads").update({
+            result = self.db.table("leads").update({
                 "selected_aircraft": aircraft_name
             }).eq("session_id", session_id).execute()
+            
+            # Verify update succeeded
+            if result.data:
+                print(f"✅ Aircraft selection persisted: {aircraft_name} for session {session_id}")
+            else:
+                print(f"⚠️  WARNING: Aircraft selection update returned no data")
         except Exception as e:
             # Column might not exist in old schema - log but don't fail
             print(f"⚠️  Could not update selected_aircraft (column may not exist): {e}")
         
-        return self.get_lead(session_id)
+        # Always return fresh state to verify persistence
+        updated_lead = self.get_lead(session_id)
+        if updated_lead.selected_aircraft != aircraft_name:
+            print(f"⚠️  WARNING: Aircraft selection may not have persisted correctly. Expected: {aircraft_name}, Got: {updated_lead.selected_aircraft}")
+        
+        return updated_lead
 
     def get_missing_fields(self, lead: LeadState) -> List[str]:
         """
@@ -417,10 +499,15 @@ class LeadManager:
 
         return result.data if result.data else []
 
+    # NOTE: Recovery function removed - aircraft_history no longer used
+    # Auto-selection happens at confirmation time if selected_aircraft is NULL
+
     def get_user_leads(self, user_id: str) -> List[dict]:
         """
         Get all leads for a specific user.
         Used for My Bookings page.
+        NOTE: No recovery logic - confirmed bookings should always have selected_aircraft
+        (auto-selected at confirmation time if not user-selected)
         """
         try:
             result = (
@@ -430,10 +517,19 @@ class LeadManager:
                 .order("created_at", desc=True)
                 .execute()
             )
-            return result.data if result.data else []
+            
+            if result.data:
+                # No recovery logic - confirmed bookings should always have selected_aircraft
+                # (auto-selected at confirmation time if not user-selected)
+                return result.data
+            
+            return []
         except Exception as e:
             print(f"⚠️  Error fetching user leads: {e}")
             return []
+    
+    # NOTE: Navigation methods removed - aircraft suggestions are now stateless
+    # No history tracking needed - always compute fresh from aircraft_service
 
 
 # Singleton instance

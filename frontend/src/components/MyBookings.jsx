@@ -1,16 +1,64 @@
 import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
+import { useNavigate } from 'react-router-dom'
 import { supabase, isSupabaseConfigured } from '../lib/supabase'
 
 const API_BASE = import.meta.env.VITE_API_URL 
   ? `${import.meta.env.VITE_API_URL}` 
   : '/api'
 
+// Helper function to derive airport code
+const deriveAirportCode = (route) => {
+  if (!route) return 'N/A'
+  // If already 3 uppercase letters, use as-is
+  if (/^[A-Z]{3}$/.test(route.trim())) {
+    return route.trim()
+  }
+  // Otherwise, take first 3 characters and uppercase
+  return route.substring(0, 3).toUpperCase()
+}
+
+// Helper function to get aircraft image URL
+// Since we don't have an aircraft API, we'll use a placeholder approach
+// In production, this could fetch from an aircraft endpoint
+const getAircraftImageUrl = (aircraftName) => {
+  if (!aircraftName) return null
+  
+  // Common aircraft image URLs (using Unsplash placeholders)
+  // In a real app, this would come from the aircraft service
+  const aircraftImageMap = {
+    'Gulfstream G650': 'https://images.unsplash.com/photo-1474302770737-173ee21bab63?w=600&h=400&fit=crop',
+    'Falcon 8X': 'https://images.unsplash.com/photo-1583416750470-965b2707b355?w=600&h=400&fit=crop',
+    'Challenger 650': 'https://images.unsplash.com/photo-1569629743817-70d8db6c323b?w=600&h=400&fit=crop',
+    'Citation Latitude': 'https://images.unsplash.com/photo-1583416750470-965b2707b355?w=600&h=400&fit=crop',
+    'Citation CJ4': 'https://images.unsplash.com/photo-1569629743817-70d8db6c323b?w=600&h=400&fit=crop',
+    'Phenom 300E': 'https://images.unsplash.com/photo-1559628233-100c798642d4?w=600&h=400&fit=crop',
+    'Learjet 75': 'https://images.unsplash.com/photo-1474302770737-173ee21bab63?w=600&h=400&fit=crop',
+    'Praetor 600': 'https://images.unsplash.com/photo-1559628233-100c798642d4?w=600&h=400&fit=crop',
+  }
+  
+  // Try exact match first
+  if (aircraftImageMap[aircraftName]) {
+    return aircraftImageMap[aircraftName]
+  }
+  
+  // Try partial match (case-insensitive)
+  const normalizedName = aircraftName.toLowerCase()
+  for (const [key, url] of Object.entries(aircraftImageMap)) {
+    if (normalizedName.includes(key.toLowerCase()) || key.toLowerCase().includes(normalizedName)) {
+      return url
+    }
+  }
+  
+  return null
+}
+
 export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, onMyProfile, onLogout, onStartNewBooking }) {
   const [bookings, setBookings] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [selectedBookingId, setSelectedBookingId] = useState(null)
 
   useEffect(() => {
     // Route protection: Check if user is authenticated
@@ -19,9 +67,7 @@ export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, on
       if (!session) {
         // Redirect to landing and open auth modal
         setIsAuthenticated(false)
-        if (onBack) {
-          onBack()
-        }
+        navigate('/')
         // Small delay to ensure navigation happens before modal opens
         setTimeout(() => {
           if (onAuthClick) {
@@ -85,11 +131,13 @@ export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, on
       }
 
       const data = await response.json()
-      // Filter to only show confirmed bookings
-      const confirmedBookings = (data.bookings || []).filter(
-        booking => booking.status === 'confirmed'
+      // Backend ONLY returns confirmed bookings with selected_aircraft
+      // Frontend assumes all returned bookings are valid
+      // Additional defensive check: filter out any bookings without aircraft (shouldn't happen)
+      const validBookings = (data.bookings || []).filter(
+        booking => booking.selected_aircraft !== null && booking.selected_aircraft !== undefined
       )
-      setBookings(confirmedBookings)
+      setBookings(validBookings)
     } catch (err) {
       setError(err.message || 'Failed to load bookings')
     } finally {
@@ -115,10 +163,28 @@ export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, on
     return '11 Hours'
   }
 
-  // Since we only show confirmed bookings, status is always "Confirmed"
-  const getBookingStatus = () => {
-    return { text: 'Confirmed', color: 'text-emerald-400' }
+  // Map status to UI label and color
+  // NOTE: Backend only returns confirmed bookings, but UI shows "Booking Requested"
+  // This is a PRESENTATION choice - backend status remains "confirmed"
+  const getBookingStatus = (status) => {
+    // Always show "Booking Requested" regardless of backend status
+    // Backend guarantees all bookings are confirmed with selected_aircraft
+    return { text: 'Booking Requested', color: 'text-amber-400' }
   }
+
+  const handleBookingClick = (bookingId) => {
+    // Toggle: if same booking clicked, close panel; otherwise open new one
+    setSelectedBookingId(selectedBookingId === bookingId ? null : bookingId)
+  }
+
+  const selectedBooking = bookings.find(b => b.session_id === selectedBookingId)
+
+  // Reset selected booking if it's no longer in the list
+  useEffect(() => {
+    if (selectedBookingId && !selectedBooking) {
+      setSelectedBookingId(null)
+    }
+  }, [bookings, selectedBookingId, selectedBooking])
 
   // Do NOT render UI if not authenticated
   if (!isAuthenticated) {
@@ -181,7 +247,7 @@ export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, on
 
           {!loading && !error && bookings.length === 0 && (
             <div className="text-center py-12">
-              <p className="text-jet-400 mb-4">No confirmed bookings yet</p>
+              <p className="text-jet-400 mb-4">No bookings yet</p>
               {onStartNewBooking ? (
                 <button
                   onClick={onStartNewBooking}
@@ -206,12 +272,19 @@ export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, on
           {!loading && !error && bookings.length > 0 && (
             <div className="space-y-4">
               {bookings.map((booking, index) => {
-                const status = getBookingStatus()
-                const routeFrom = booking.route_from || 'Dubai'
-                const routeTo = booking.route_to || 'Singapore'
-                const fromCode = booking.route_from ? booking.route_from.substring(0, 3).toUpperCase() : 'DXB'
-                const toCode = booking.route_to ? booking.route_to.substring(0, 3).toUpperCase() : 'SIN'
-                const aircraft = booking.selected_aircraft || 'Gulfstream G650'
+                // Defensive check: skip if selected_aircraft is null (shouldn't happen per backend filter)
+                if (!booking.selected_aircraft) {
+                  return null
+                }
+                
+                const status = getBookingStatus(booking.status)
+                const routeFrom = booking.route_from || ''
+                const routeTo = booking.route_to || ''
+                const fromCode = deriveAirportCode(routeFrom)
+                const toCode = deriveAirportCode(routeTo)
+                const aircraftName = booking.selected_aircraft
+                const aircraftImageUrl = getAircraftImageUrl(aircraftName)
+                const isSelected = selectedBookingId === booking.session_id
                 
                 return (
                   <motion.div
@@ -219,53 +292,84 @@ export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, on
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.1 }}
+                    onClick={() => handleBookingClick(booking.session_id)}
                     className={`
                       bg-jet-900/60 backdrop-blur-md border rounded-2xl p-6 
-                      ${index === 0 
-                        ? 'border-rose-500/30 bg-gradient-to-r from-rose-900/20 to-jet-900/60' 
+                      ${isSelected 
+                        ? 'border-gold-500/50 bg-gradient-to-r from-gold-900/20 to-jet-900/60' 
                         : 'border-jet-800/50 hover:border-jet-700/50'
                       }
                       transition-all duration-300 cursor-pointer
                     `}
                   >
-                    <div className="flex items-center justify-between">
+                    {/* TOP: Aircraft Name */}
+                    <div className="text-center mb-4">
+                      <p className="text-lg font-light text-jet-100">
+                        {aircraftName}
+                      </p>
+                    </div>
+
+                    {/* MIDDLE: Main Visual Row */}
+                    <div className="flex items-center justify-between mb-4">
                       {/* Left: Origin */}
                       <div className="flex-1">
-                        <p className="text-sm text-jet-500 mb-1">{routeFrom}</p>
                         <p className="text-3xl font-bold text-jet-100 mb-1">{fromCode}</p>
-                        <p className="text-sm text-jet-500">{formatTime(booking.date_time)}</p>
+                        {booking.date_time && (
+                          <p className="text-sm text-jet-500">{formatTime(booking.date_time)}</p>
+                        )}
                       </div>
 
-                      {/* Center: Aircraft & Duration */}
+                      {/* Center: Aircraft Image */}
                       <div className="flex-1 flex flex-col items-center px-8">
-                        <div className="mb-4">
-                          <svg className="w-24 h-8 text-jet-600" fill="currentColor" viewBox="0 0 120 40">
+                        <div className="mb-2 w-24 h-16 rounded-lg overflow-hidden bg-jet-800/50 flex items-center justify-center relative">
+                          {aircraftImageUrl ? (
+                            <img
+                              src={aircraftImageUrl}
+                              alt={aircraftName || 'Aircraft'}
+                              className="w-full h-full object-cover"
+                              onError={(e) => {
+                                e.target.style.display = 'none'
+                                const svg = e.target.parentElement.querySelector('svg')
+                                if (svg) svg.style.display = 'block'
+                              }}
+                            />
+                          ) : null}
+                          <svg 
+                            className={`w-24 h-8 text-jet-600 ${aircraftImageUrl ? 'absolute' : ''}`}
+                            fill="currentColor" 
+                            viewBox="0 0 120 40"
+                            style={{ display: aircraftImageUrl ? 'none' : 'block' }}
+                          >
                             <path d="M10 20 L30 15 L90 15 L110 20 L90 25 L30 25 Z" />
                           </svg>
                         </div>
-                        <p className="text-sm text-jet-400 mb-2">{aircraft}</p>
-                        <p className="text-xs text-jet-500">{formatFlightDuration(routeFrom, routeTo)}</p>
+                        {aircraftName && (
+                          <p className="text-xs text-jet-400 text-center">{aircraftName}</p>
+                        )}
                       </div>
 
                       {/* Right: Destination */}
                       <div className="flex-1 text-right">
-                        <p className="text-sm text-jet-500 mb-1">{routeTo}</p>
                         <p className="text-3xl font-bold text-jet-100 mb-1">{toCode}</p>
-                        <p className="text-sm text-jet-500">
-                          {booking.date_time ? formatTime(booking.date_time) : '12:16 PM'}
-                        </p>
+                        {booking.date_time && (
+                          <p className="text-sm text-jet-500">
+                            {formatTime(booking.date_time)}
+                          </p>
+                        )}
                       </div>
                     </div>
 
-                    {/* Status Badge */}
-                    <div className="mt-4 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
+                    {/* BOTTOM: Divider + Status */}
+                    <div className="border-t border-jet-800/50 pt-4">
+                      <div className="flex items-center justify-center gap-2">
+                        {isSelected && (
+                          <svg className="w-4 h-4 text-gold-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                          </svg>
+                        )}
                         <div className={`w-2 h-2 rounded-full ${status.color.replace('text-', 'bg-')} opacity-60`} />
-                        <span className={`text-xs ${status.color}`}>• {status.text}</span>
+                        <span className={`text-sm ${status.color}`}>{status.text}</span>
                       </div>
-                      <svg className="w-5 h-5 text-jet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
                     </div>
                   </motion.div>
                 )
@@ -275,18 +379,85 @@ export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, on
           </div>
         </main>
 
-        {/* Details Panel - Placeholder */}
-        <aside className="w-96 bg-jet-900/60 backdrop-blur-md border-l border-jet-800/50 p-8">
-          <h2 className="font-display text-2xl font-light text-jet-100 mb-8">Booking Details</h2>
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <div className="w-16 h-16 rounded-full bg-purple-500/20 flex items-center justify-center mx-auto mb-4">
-                <span className="text-2xl font-bold text-purple-400">WIP</span>
+        {/* Booking Details Panel */}
+        <AnimatePresence>
+          {selectedBooking && (
+            <motion.aside
+              initial={{ x: '100%', opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: '100%', opacity: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="w-96 bg-jet-900/60 backdrop-blur-md border-l border-jet-800/50 flex flex-col h-full"
+            >
+              <div className="p-8 overflow-y-auto flex-1">
+                {/* Header */}
+                <div className="mb-8">
+                  <h2 className="font-display text-2xl font-light text-jet-100 mb-4">Booking Details</h2>
+                  
+                  {/* Aircraft Name */}
+                  <div className="mb-4">
+                    <p className="text-lg font-light text-jet-200">
+                      {selectedBooking.selected_aircraft}
+                    </p>
+                  </div>
+
+                  {/* Route */}
+                  <div className="mb-4">
+                    <p className="text-sm text-jet-400 mb-1">Route</p>
+                    <p className="text-base text-jet-100">
+                      {selectedBooking.route_from || 'N/A'} → {selectedBooking.route_to || 'N/A'}
+                    </p>
+                  </div>
+
+                  {/* Status Badge */}
+                  <div className="mb-6">
+                    {(() => {
+                      const status = getBookingStatus(selectedBooking.status)
+                      return (
+                        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-jet-800/50 border border-jet-700/50">
+                          <div className={`w-2 h-2 rounded-full ${status.color.replace('text-', 'bg-')}`} />
+                          <span className={`text-xs ${status.color}`}>{status.text}</span>
+                        </div>
+                      )
+                    })()}
+                  </div>
+                </div>
+
+                {/* Body - WIP Placeholder */}
+                <div className="border-t border-jet-800/50 pt-8">
+                  <div className="text-center py-12">
+                    <div className="w-16 h-16 rounded-full bg-purple-500/20 flex items-center justify-center mx-auto mb-4">
+                      <span className="text-2xl font-bold text-purple-400">WIP</span>
+                    </div>
+                    <p className="text-sm text-jet-400 mb-2">Booking details are being prepared.</p>
+                    <p className="text-xs text-jet-500">Our team is reviewing your request.</p>
+                  </div>
+
+                  {/* Future Fields Structure (commented for reference) */}
+                  {/* 
+                  <div className="space-y-6">
+                    <div>
+                      <p className="text-sm text-jet-400 mb-2">Contact Information</p>
+                      <p className="text-base text-jet-100">{selectedBooking.name}</p>
+                      <p className="text-sm text-jet-300">{selectedBooking.email}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-jet-400 mb-2">Passengers</p>
+                      <p className="text-base text-jet-100">{selectedBooking.pax || 'N/A'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-jet-400 mb-2">Date & Time</p>
+                      <p className="text-base text-jet-100">
+                        {selectedBooking.date_time ? new Date(selectedBooking.date_time).toLocaleString() : 'N/A'}
+                      </p>
+                    </div>
+                  </div>
+                  */}
+                </div>
               </div>
-              <p className="text-sm text-jet-500">Work In Progress</p>
-            </div>
-          </div>
-        </aside>
+            </motion.aside>
+          )}
+        </AnimatePresence>
     </div>
   )
 }

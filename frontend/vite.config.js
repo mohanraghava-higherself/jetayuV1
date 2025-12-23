@@ -12,6 +12,15 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/api/, '')
       }
     }
+  },
+  // SPA fallback for direct URL access (Vite handles this automatically in dev)
+  // For production, ensure your server serves index.html for all routes
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: undefined
+      }
+    }
   }
 })
 

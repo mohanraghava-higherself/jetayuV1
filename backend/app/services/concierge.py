@@ -168,9 +168,24 @@ class ConciergeService:
             known.append(f"Passengers: {lead_state.pax}")
         if lead_state.special_requests:
             known.append(f"Special requests: {', '.join(lead_state.special_requests)}")
+        # CRITICAL: Include selected_aircraft if it exists (from database, source of truth)
+        if lead_state.selected_aircraft:
+            known.append(f"Selected Aircraft: {lead_state.selected_aircraft}")
 
         if known:
             guidance_parts.append("Information gathered so far:\n" + "\n".join(known))
+        
+        # CRITICAL: Add hard constraint about aircraft
+        if lead_state.selected_aircraft:
+            guidance_parts.append(
+                f"\nCRITICAL AIRCRAFT CONSTRAINT:\n"
+                f"- The selected aircraft is: {lead_state.selected_aircraft}\n"
+                f"- This is FINAL and comes from the database (source of truth)\n"
+                f"- NEVER infer, guess, or change the aircraft name\n"
+                f"- NEVER use aircraft mentioned in conversation history if different from selected_aircraft\n"
+                f"- When referencing aircraft, ALWAYS use exactly: '{lead_state.selected_aircraft}'\n"
+                f"- Do NOT extract aircraft from special_requests or previous messages"
+            )
 
         # What we need (subtly guide the conversation)
         if missing_fields:
@@ -206,13 +221,20 @@ class ConciergeService:
                 )
 
         if not missing_fields:
+            # Build example summary with explicit aircraft if selected
+            example_aircraft_text = ""
+            if lead_state.selected_aircraft:
+                example_aircraft_text = f" on the {lead_state.selected_aircraft}"
+            
             guidance_parts.append(
                 "IMPORTANT: We have ALL the details needed. Do the following:\n"
-                "1. Summarize the booking details (route, date, passengers, name, email)\n"
+                "1. Summarize the booking details (route, date, passengers, name, email"
+                + (f", aircraft: {lead_state.selected_aircraft}" if lead_state.selected_aircraft else "") + ")\n"
                 "2. Ask if they would like to PROCEED with placing the booking request\n"
-                "3. Example: 'So that's [from] to [to] on [date] for [pax] passengers. "
+                f"3. Example: 'So that's [from] to [to] on [date] for [pax] passengers{example_aircraft_text}. "
                 "I have your details as [name]. Shall I place this request with our team?'\n"
-                "4. Wait for their confirmation before proceeding."
+                "4. Wait for their confirmation before proceeding.\n"
+                + (f"5. CRITICAL: If mentioning aircraft, use EXACTLY '{lead_state.selected_aircraft}' (from database)" if lead_state.selected_aircraft else "")
             )
 
         return "\n\n".join(guidance_parts) if guidance_parts else ""

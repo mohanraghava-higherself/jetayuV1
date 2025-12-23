@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 
 export default function LandingPage({ onStartChat, onMyBookings, onAuthClick }) {
   const [user, setUser] = useState(null)
+  const [landingMessage, setLandingMessage] = useState('')
 
   useEffect(() => {
     // Check if user is logged in
@@ -22,7 +23,7 @@ export default function LandingPage({ onStartChat, onMyBookings, onAuthClick }) 
   }, [])
 
   return (
-    <div className="flex-1 flex items-center justify-center" style={{ marginLeft: '103px' }}>
+    <div className="flex-1 flex items-center justify-center" style={{ width: '100%', height: '100%' }}>
         {/* Single centered container: Logo + Prompt + Input */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -135,35 +136,46 @@ export default function LandingPage({ onStartChat, onMyBookings, onAuthClick }) 
                 paddingRight: '70px' // Space for voice button
               }}
             >
-              {/* Placeholder Text */}
+              {/* Controlled Input */}
               <input
                 type="text"
                 placeholder="New York to London, tomorrow evening..."
-                onClick={onStartChat}
-                readOnly
+                value={landingMessage}
+                onChange={(e) => setLandingMessage(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && landingMessage.trim()) {
+                    e.preventDefault()
+                    onStartChat(landingMessage.trim())
+                  }
+                }}
                 style={{
                   width: '100%',
                   height: '100%',
                   background: 'transparent',
                   border: 'none',
                   outline: 'none',
-                  fontFamily: 'Outfit, sans-serif', // Using Outfit as similar to Satoshi Variable
+                  fontFamily: 'Outfit, sans-serif',
                   fontSize: '14px',
                   fontWeight: 500,
-                  color: 'rgba(255, 255, 255, 0.4)', // #FFFFFF at 40% opacity
+                  color: landingMessage ? 'rgba(255, 255, 255, 0.9)' : 'rgba(255, 255, 255, 0.4)',
                   lineHeight: '100%',
                   letterSpacing: '0%',
-                  cursor: 'pointer'
+                  cursor: 'text'
                 }}
               />
             </div>
           </motion.div>
 
-          {/* Voice Icon Button with Gradient Border */}
+          {/* Enter/Start Button */}
           <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={onStartChat}
+            whileHover={landingMessage.trim() ? { scale: 1.05 } : {}}
+            whileTap={landingMessage.trim() ? { scale: 0.95 } : {}}
+            onClick={() => {
+              if (landingMessage.trim()) {
+                onStartChat(landingMessage.trim())
+              }
+            }}
+            disabled={!landingMessage.trim()}
             style={{
               position: 'absolute',
               width: '54px',
@@ -172,10 +184,13 @@ export default function LandingPage({ onStartChat, onMyBookings, onAuthClick }) 
               right: '8px',
               borderRadius: '12px',
               padding: '1px',
-              background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.24) 0%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 255, 255, 0.24) 100%)',
+              background: landingMessage.trim() 
+                ? 'linear-gradient(180deg, rgba(255, 255, 255, 0.24) 0%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 255, 255, 0.24) 100%)'
+                : 'linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.04) 50%, rgba(255, 255, 255, 0.08) 100%)',
               border: 'none',
-              cursor: 'pointer',
-              zIndex: 20
+              cursor: landingMessage.trim() ? 'pointer' : 'not-allowed',
+              zIndex: 20,
+              opacity: landingMessage.trim() ? 1 : 0.5
             }}
           >
             <div
@@ -190,7 +205,7 @@ export default function LandingPage({ onStartChat, onMyBookings, onAuthClick }) 
               }}
             >
               <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
               </svg>
             </div>
           </motion.button>

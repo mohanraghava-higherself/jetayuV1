@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 
 export default function MyProfile({ onBack, user, onAuthClick, onMyBookings, onMyProfile, onLogout }) {
+  const navigate = useNavigate()
   const [profileData, setProfileData] = useState({
     name: '',
     email: '',
@@ -87,9 +89,7 @@ export default function MyProfile({ onBack, user, onAuthClick, onMyBookings, onM
     if (onLogout) {
       onLogout()
     }
-    if (onBack) {
-      onBack()
-    }
+    navigate('/')
   }
 
   return (
