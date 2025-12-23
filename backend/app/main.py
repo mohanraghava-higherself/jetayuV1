@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routes import chat
+from app.routes import auth_guard
 
 app = FastAPI(
     title="Jetayu",
@@ -20,6 +21,7 @@ app.add_middleware(
 
 # Include routes
 app.include_router(chat.router, tags=["Chat"])
+app.include_router(auth_guard.router, tags=["Auth"])
 
 
 @app.get("/health")

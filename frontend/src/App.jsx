@@ -25,6 +25,7 @@ export default function App() {
   const location = useLocation()
   const navigate = useNavigate()
   const [user, setUser] = useState(null)
+  const [authBlockingError, setAuthBlockingError] = useState(null)
   
   // Derive view from location pathname
   const getViewFromPath = (pathname) => {
@@ -67,8 +68,53 @@ export default function App() {
 
   // Initialize auth state
   useEffect(() => {
+    const enforceProviderConsistency = async (session) => {
+      if (!session?.user?.email) return
+      const attemptedProvider = session.user.app_metadata?.provider
+      if (!attemptedProvider) return
+
+      try {
+        const response = await fetch(`${API_BASE}/auth/provider-check`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: session.user.email,
+            attempted_provider: attemptedProvider
+          })
+        })
+
+        if (!response.ok) {
+          console.warn('Provider check failed with status', response.status)
+          return
+        }
+
+        const data = await response.json()
+        if (data?.conflict) {
+          const conflictMessage = attemptedProvider === 'google'
+            ? 'This email is already registered. Please sign in using email.'
+            : 'This account was created using Google. Please sign in with Google.'
+
+          setAuthBlockingError(conflictMessage)
+          setShowAuthModal(true)
+          await supabase.auth.signOut()
+        } else {
+          setAuthBlockingError(null)
+        }
+      } catch (error) {
+        console.warn('Provider consistency check failed:', error)
+      }
+    }
+
+    // Check for password recovery token in URL on initial load
+    const hashParams = new URLSearchParams(window.location.hash.substring(1))
+    const type = hashParams.get('type')
+    if (type === 'recovery') {
+      setShowAuthModal(true)
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null)
+      enforceProviderConsistency(session)
       // if (session?.user) {
       //   console.log('👤 User logged in:')
       //   console.log('   Name:', session.user.user_metadata?.full_name || 'Not set')
@@ -79,8 +125,14 @@ export default function App() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null)
+      enforceProviderConsistency(session)
+      
+      // Detect PASSWORD_RECOVERY event and open auth modal
+      if (event === 'PASSWORD_RECOVERY') {
+        setShowAuthModal(true)
+      }
       
       if (session?.user) {
         // console.log('👤 User logged in:')
@@ -165,6 +217,7 @@ export default function App() {
 
   const handleAuthSuccess = async () => {
     setShowAuthModal(false)
+    setAuthBlockingError(null)
     // If there's a pending booking, retry it after auth success
     if (pendingBookingSessionId) {
       // Resend the last user message to trigger confirmation with auth
@@ -184,6 +237,7 @@ export default function App() {
     // Clear pending booking - submission will remain in 'awaiting_auth' state
     setPendingBookingSessionId(null)
     setShowAuthModal(false)
+    setAuthBlockingError(null)
     // Don't send any confirmation message - backend will handle the state
   }
 
@@ -626,6 +680,7 @@ export default function App() {
           isOpen={showAuthModal}
           onClose={handleAuthClose}
           onSuccess={handleAuthSuccess}
+          externalError={authBlockingError}
         />
       </>
     )
@@ -1120,8 +1175,9 @@ export default function App() {
 
       <AuthModal
         isOpen={showAuthModal}
-        onClose={() => setShowAuthModal(false)}
+        onClose={handleAuthClose}
         onSuccess={handleAuthSuccess}
+        externalError={authBlockingError}
       />
 
       {/* Photo Gallery Modal */}
