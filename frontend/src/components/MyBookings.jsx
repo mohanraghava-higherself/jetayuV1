@@ -60,7 +60,7 @@ function BookingDetailsPanel({ booking, onClose, isMobile }) {
   }
 
   const content = (
-    <div className="p-8 overflow-y-auto flex-1">
+    <div className="p-8 overflow-y-auto flex-1" style={isMobile ? { paddingBottom: 'calc(2rem + 12px)' } : {}}>
       {/* Header */}
       <div className="mb-8">
         <h2 className="font-display text-2xl font-light text-jet-100 mb-4">Booking Details</h2>

@@ -16,10 +16,7 @@ export default function ChatInput({ onSend, disabled, placeholder, isMobile = fa
     <div style={{ width: '100%' }}>
       <form onSubmit={handleSubmit} style={{ width: '100%', padding: isMobile ? '0' : '24px' }}>
         <div className="relative" style={{ width: '100%' }}>
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.3 }}
+          <div
             style={{
               width: '100%',
               height: '68px',
@@ -130,7 +127,7 @@ export default function ChatInput({ onSend, disabled, placeholder, isMobile = fa
                 </motion.button>
               </motion.div>
             </div>
-          </motion.div>
+          </div>
         </div>
       </form>
     </div>

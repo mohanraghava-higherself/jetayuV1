@@ -367,3 +367,4 @@ export default function MobileHeader({ user, onAuthClick, onMyBookings, onMyProf
   )
 }
 
+

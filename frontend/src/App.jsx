@@ -700,7 +700,9 @@ export default function App() {
               position: 'relative',
               overflow: 'hidden',
               display: 'flex',
-              flexDirection: 'column'
+              flexDirection: 'column',
+              paddingBottom: '12px',
+              boxSizing: 'border-box'
             }}
           >
             {content}
@@ -874,7 +876,7 @@ export default function App() {
               flexShrink: 0,
               backgroundColor: '#060201', 
               padding: '16px',
-              paddingBottom: 'max(16px, env(safe-area-inset-bottom))',
+              paddingBottom: 'max(28px, calc(16px + 12px + env(safe-area-inset-bottom)))',
               zIndex: 10
             }}>
               <ChatInput 

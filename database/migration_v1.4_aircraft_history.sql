@@ -14,3 +14,4 @@ COMMENT ON COLUMN leads.aircraft_history IS 'JSON array of aircraft lists shown 
 COMMENT ON COLUMN leads.current_aircraft_index IS 'Current index into aircraft_history for navigation';
 
 
+
