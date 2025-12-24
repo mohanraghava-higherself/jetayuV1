@@ -2,9 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Jt Barnez Font - Commented out until valid font files are added */
-/* The font files are missing or corrupted, causing browser warnings */
-/* Uncomment and add valid font files to /public/fonts/ when available */
+/* Jt Barnez Font */
+/* NOTE: Font files are missing or corrupted. Commented out to prevent console errors.
+   To enable:
+   1. Add valid font files to /public/fonts/ directory:
+      - JtBarnez-Regular.woff2 (required)
+      - JtBarnez-Regular.woff (optional fallback)
+      - JtBarnez-Regular.ttf (optional fallback)
+   2. Uncomment the @font-face declaration below.
+   
+   Current behavior: Font will fall back to sans-serif until valid files are added.
+*/
 /*
 @font-face {
   font-family: 'Jt Barnez';

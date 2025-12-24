@@ -863,6 +863,7 @@ export default function App() {
                       onSelect={handleJetSelect}
                       onPreview={handleAircraftCardPreview}
                       navigationIntent={aircraftNavigationIntent}
+                      selectedAircraft={selectedAircraft}
                     />
                   )}
                 </AnimatePresence>
@@ -1265,6 +1266,7 @@ export default function App() {
                       onSelect={handleJetSelect}
                       onPreview={handleAircraftCardPreview}
                       navigationIntent={aircraftNavigationIntent}
+                      selectedAircraft={selectedAircraft}
                     />
                   )}
                 </AnimatePresence>

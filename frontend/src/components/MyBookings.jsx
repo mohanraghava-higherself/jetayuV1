@@ -457,13 +457,21 @@ export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, on
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.1 }}
                     onClick={() => handleBookingClick(booking.session_id)}
+                    style={{
+                      background: isSelected 
+                        ? 'linear-gradient(180deg, #683F49 0%, #4A1E35 100%)'
+                        : 'rgba(21, 21, 21, 0.6)',
+                      backdropFilter: 'blur(24px)',
+                      border: isSelected 
+                        ? '1px solid rgba(255, 255, 255, 0.3)' 
+                        : '1px solid rgba(255, 255, 255, 0.1)',
+                      borderRadius: '16px',
+                      padding: '24px',
+                      transition: 'all 0.3s',
+                      cursor: 'pointer'
+                    }}
                     className={`
-                      bg-jet-900/60 backdrop-blur-md border rounded-2xl p-6 
-                      ${isSelected 
-                        ? 'border-gold-500/50 bg-gradient-to-r from-gold-900/20 to-jet-900/60' 
-                        : 'border-jet-800/50 hover:border-jet-700/50'
-                      }
-                      transition-all duration-300 cursor-pointer
+                      ${!isSelected ? 'hover:border-jet-700/50' : ''}
                     `}
                   >
                     {/* TOP: Aircraft Name */}

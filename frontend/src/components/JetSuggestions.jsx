@@ -1,12 +1,22 @@
 import { motion } from 'framer-motion'
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import JetCard from './JetCard'
 
-export default function JetSuggestions({ aircraft = [], onSelect, onCardClick, onPreview, navigationIntent = null }) {
+export default function JetSuggestions({ aircraft = [], onSelect, onCardClick, onPreview, navigationIntent = null, selectedAircraft = null }) {
   const scrollContainerRef = useRef(null)
+  const [activeJetId, setActiveJetId] = useState(null) // Track visually selected card
 
+  // Card selection only - visual feedback (gradient) without opening panel
+  const handleCardSelect = (jet) => {
+    // IMMEDIATE visual selection only
+    setActiveJetId(jet.id)
+  }
+
+  // "View all details" button handler - selection + open panel
   const handleViewMore = (jet) => {
-    // Open preview panel directly (NO chat message - prevents intent detection and re-pull)
+    // Set selection first
+    setActiveJetId(jet.id)
+    // Then open preview panel (NO chat message - prevents intent detection and re-pull)
     if (onPreview) {
       onPreview(jet)
     }
@@ -25,14 +35,16 @@ export default function JetSuggestions({ aircraft = [], onSelect, onCardClick, o
       })
     }
   }
-
-  // Preview/interaction - user clicked card (not the Select button)
-  const handlePreview = (jet) => {
-    // Open preview panel without selecting
-    if (onPreview) {
-      onPreview(jet)
+  
+  // Reset active jet when selectedAircraft changes (final selection confirmed)
+  useEffect(() => {
+    if (selectedAircraft) {
+      const matchedJet = aircraft.find(a => a.name === selectedAircraft.name)
+      if (matchedJet) {
+        setActiveJetId(matchedJet.id)
+      }
     }
-  }
+  }, [selectedAircraft, aircraft])
 
   if (!aircraft || aircraft.length === 0) {
     return null
@@ -83,8 +95,9 @@ export default function JetSuggestions({ aircraft = [], onSelect, onCardClick, o
               jet={aircraft[0]}
               onSelect={handleSelect}
               onViewMore={handleViewMore}
-              onPreview={handlePreview}
+              onCardSelect={handleCardSelect}
               compact={true}
+              selected={activeJetId === aircraft[0].id || (selectedAircraft && selectedAircraft.name === aircraft[0].name)}
             />
           </motion.div>
         </div>
@@ -119,8 +132,9 @@ export default function JetSuggestions({ aircraft = [], onSelect, onCardClick, o
                   jet={jet}
                   onSelect={handleSelect}
                   onViewMore={handleViewMore}
-                  onPreview={handlePreview}
+                  onCardSelect={handleCardSelect}
                   compact={true}
+                  selected={activeJetId === jet.id || (selectedAircraft && selectedAircraft.name === jet.name)}
                 />
               </motion.div>
             ))}

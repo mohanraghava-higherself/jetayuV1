@@ -143,15 +143,17 @@ export default function MobileHeader({ user, onAuthClick, onMyBookings, onMyProf
         {/* Center: JETAYU */}
         <h1
           style={{
-            fontFamily: '"Cormorant Garamond", serif',
+            fontFamily: '"Jt Barnez", sans-serif',
             fontSize: '24px',
-            fontWeight: 700,
+            fontWeight: 600,
             background: 'linear-gradient(180deg, #7B5159 0%, #2F1E22 100%)',
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
             backgroundClip: 'text',
             margin: 0,
-            padding: 0
+            padding: 0,
+            WebkitFontSmoothing: 'antialiased',
+            MozOsxFontSmoothing: 'grayscale'
           }}
         >
           JETAYU

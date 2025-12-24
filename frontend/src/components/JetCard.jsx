@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 
-export default function JetCard({ jet, onSelect, onViewMore, onPreview, compact = false }) {
+export default function JetCard({ jet, onSelect, onViewMore, onPreview, onCardClick, onCardSelect, compact = false, selected = false }) {
   // Handle both old format (image) and new format (image_url)
   const imageUrl = jet.image_url || jet.image
   // Format range: keep as nm (nautical miles) for consistency
@@ -8,41 +8,56 @@ export default function JetCard({ jet, onSelect, onViewMore, onPreview, compact 
 
   const isRecommended = jet.recommended || false
 
-  // In compact mode, clicking card opens preview (not selection)
-  // Selection happens only via "Select this aircraft" button in panel
+  // Card click handler - ONLY selection, NO panel opening
   const handleCardClick = () => {
-    if (compact && onPreview) {
-      onPreview(jet)
-    } else if (!compact && onPreview) {
+    if (onCardSelect) {
+      // Dedicated selection-only handler (preferred)
+      onCardSelect(jet)
+    } else if (onCardClick) {
+      // Fallback for backward compatibility
+      onCardClick(jet)
+    } else if (onPreview) {
+      // Legacy fallback
       onPreview(jet)
     }
   }
 
-  // Handle "View all details" button - opens preview panel (no chat message)
+  // Handle "View all details" button - selection + opens preview panel
   const handleViewDetails = (e) => {
     e.stopPropagation()
     if (onViewMore) {
+      // This handler sets selection AND opens panel
       onViewMore(jet)
     }
   }
 
   return (
     <motion.div
-      initial={{ opacity: 0, scale: 0.95 }}
+      initial={false}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.3 }}
       className={`
-        jet-card bg-jet-900/60 backdrop-blur-md border rounded-2xl overflow-hidden
-        ${compact && onPreview ? 'cursor-pointer' : ''}
-        ${isRecommended ? 'border-gold-500/30 shadow-lg shadow-gold-500/10' : 'border-jet-800/50'}
+        jet-card backdrop-blur-md border rounded-2xl overflow-hidden
+        ${compact && (onCardSelect || onCardClick || onPreview) ? 'cursor-pointer' : ''}
+        ${selected 
+          ? 'border-jet-700/80' 
+          : isRecommended 
+            ? 'border-gold-500/30 shadow-lg shadow-gold-500/10' 
+            : 'border-jet-800/50'
+        }
         transition-colors duration-200 hover:border-jet-700/50
       `}
+      style={{
+        background: selected 
+          ? 'linear-gradient(180deg, #683F49 0%, #4A1E35 100%)'
+          : 'rgba(21, 21, 21, 0.6)'
+      }}
       onClick={handleCardClick}
     >
       {/* Content */}
       <div className={compact ? 'p-4' : 'p-5'}>
         {/* Aircraft Name - Centered at top */}
-        <h3 className={`font-display font-light text-jet-100 mb-4 tracking-tight text-center ${compact ? 'text-lg' : 'text-xl'}`}>
+        <h3 className={`font-display font-light mb-4 tracking-tight text-center ${compact ? 'text-lg' : 'text-xl'}`} style={{ color: selected ? 'rgba(255, 255, 255, 0.95)' : 'rgba(242, 242, 242, 1)' }}>
           {jet.name}
         </h3>
         
@@ -71,24 +86,24 @@ export default function JetCard({ jet, onSelect, onViewMore, onPreview, compact 
         {/* Specs Row - Horizontal */}
         <div className={`flex items-center justify-around gap-4 ${compact ? 'mb-3' : 'mb-4'} text-sm`}>
           <div className="flex flex-col items-center">
-            <div className="text-base font-medium text-jet-100">{jet.capacity || 'N/A'}</div>
-            <div className="text-xs text-jet-500">Passengers</div>
+            <div className="text-base font-medium" style={{ color: selected ? 'rgba(255, 255, 255, 0.95)' : 'rgba(242, 242, 242, 1)' }}>{jet.capacity || 'N/A'}</div>
+            <div className="text-xs" style={{ color: selected ? 'rgba(255, 255, 255, 0.6)' : 'rgba(163, 163, 163, 1)' }}>Passengers</div>
           </div>
           <div className="flex flex-col items-center">
-            <div className="text-base font-medium text-jet-100">{range}</div>
-            <div className="text-xs text-jet-500">Max Range</div>
+            <div className="text-base font-medium" style={{ color: selected ? 'rgba(255, 255, 255, 0.95)' : 'rgba(242, 242, 242, 1)' }}>{range}</div>
+            <div className="text-xs" style={{ color: selected ? 'rgba(255, 255, 255, 0.6)' : 'rgba(163, 163, 163, 1)' }}>Max Range</div>
           </div>
           {jet.speed_kph && (
             <div className="flex flex-col items-center">
-              <div className="text-base font-medium text-jet-100">{jet.speed_kph} km/h</div>
-              <div className="text-xs text-jet-500">Top Speed</div>
+              <div className="text-base font-medium" style={{ color: selected ? 'rgba(255, 255, 255, 0.95)' : 'rgba(242, 242, 242, 1)' }}>{jet.speed_kph} km/h</div>
+              <div className="text-xs" style={{ color: selected ? 'rgba(255, 255, 255, 0.6)' : 'rgba(163, 163, 163, 1)' }}>Top Speed</div>
             </div>
           )}
         </div>
 
         {/* Description - One line */}
         {jet.description && (
-          <p className="text-sm text-jet-400 mb-4 leading-relaxed font-light line-clamp-2">
+          <p className="text-sm mb-4 leading-relaxed font-light line-clamp-2" style={{ color: selected ? 'rgba(255, 255, 255, 0.8)' : 'rgba(163, 163, 163, 1)' }}>
             {jet.description}
           </p>
         )}

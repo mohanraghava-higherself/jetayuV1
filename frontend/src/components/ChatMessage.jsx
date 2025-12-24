@@ -64,7 +64,7 @@ const ChatMessage = forwardRef(function ChatMessage({ message, isUser, isNew, re
           <div className="flex items-center gap-2 mb-2.5">
             <div className="w-1.5 h-1.5 rounded-full bg-gold-500/80" />
             <span className="text-[11px] font-medium text-gold-500/70 uppercase tracking-wider">
-              Concierge
+              Jetayu
             </span>
           </div>
           <p style={{
