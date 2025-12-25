@@ -41,6 +41,7 @@ if (isSupabaseConfigured) {
       signUp: async () => ({ error: { message: 'Supabase not configured. Please check your .env file and restart the dev server.' } }),
       signInWithPassword: async () => ({ error: { message: 'Supabase not configured. Please check your .env file and restart the dev server.' } }),
       signInWithOAuth: async () => ({ error: { message: 'Supabase not configured. Please check your .env file and restart the dev server.' } }),
+      signOut: async () => ({ error: null }), // Mock signOut always succeeds
       getSession: async () => ({ data: { session: null } }),
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } })
     }

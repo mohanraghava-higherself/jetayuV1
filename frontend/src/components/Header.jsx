@@ -3,7 +3,15 @@ import { supabase } from '../lib/supabase'
 
 export default function Header({ user, onAuthClick, onMyBookings }) {
   const handleLogout = async () => {
-    await supabase.auth.signOut()
+    try {
+      await supabase.auth.signOut({ scope: 'local' })
+    } catch (err) {
+      // EXPECTED: 403 can happen, DO NOT BLOCK LOGOUT
+      console.warn('[LOGOUT] Supabase signOut failed (ignored):', err)
+    } finally {
+      // ALWAYS run local cleanup regardless of Supabase response
+      // Note: Header component doesn't manage app state, parent handles it
+    }
   }
 
   return (

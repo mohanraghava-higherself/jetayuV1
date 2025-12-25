@@ -30,7 +30,7 @@ async function checkProviderConflict(email, attemptedProvider) {
   }
 }
 
-export default function AuthModal({ isOpen, onClose, onSuccess, externalError, onAuthStart, onAuthEnd }) {
+export default function AuthModal({ isOpen, onClose, onSuccess, externalError, onAuthStart, onAuthEnd, user }) {
   const location = useLocation()
   // Unified modal state: 'login' | 'signup' | 'forgot_password' | 'reset_password' | 'reset_success'
   const [modalState, setModalState] = useState('login')
@@ -42,6 +42,15 @@ export default function AuthModal({ isOpen, onClose, onSuccess, externalError, o
   const [phone, setPhone] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+
+  // Auto-close modal when user becomes authenticated
+  // This handles successful login via OAuth popup, new tab, or email
+  useEffect(() => {
+    if (isOpen && user) {
+      // User successfully logged in - close modal automatically
+      onClose?.()
+    }
+  }, [isOpen, user, onClose])
 
   // Detect PASSWORD_RECOVERY event from Supabase
   useEffect(() => {
@@ -180,9 +189,8 @@ export default function AuthModal({ isOpen, onClose, onSuccess, externalError, o
     }
 
     try {
-      // Determine redirect URL: if user is on /chat, redirect back to /chat after login
-      const redirectPath = location.pathname.startsWith('/chat') ? '/chat' : '/'
-      const redirectTo = `${window.location.origin}${redirectPath}`
+      // Redirect to callback page that will handle postMessage and auto-close
+      const redirectTo = `${window.location.origin}/auth/callback`
       
       // Get Supabase URL from environment
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
@@ -190,17 +198,21 @@ export default function AuthModal({ isOpen, onClose, onSuccess, externalError, o
         throw new Error('Supabase URL not configured')
       }
 
-      // Construct OAuth URL manually to open in new tab
+      // Construct OAuth URL with callback redirect
       // Format: https://<project>.supabase.co/auth/v1/authorize?provider=google&redirect_to=<encoded_url>
       const oauthUrl = `${supabaseUrl}/auth/v1/authorize?provider=${provider}&redirect_to=${encodeURIComponent(redirectTo)}`
       
-      // Open OAuth in new tab (isolates auth flow from main app)
-      // This prevents chat-leave warnings and navigation issues
-      const newTab = window.open(oauthUrl, '_blank')
+      // Open OAuth in popup window (not new tab)
+      // Popup dimensions optimized for OAuth flow
+      const popup = window.open(
+        oauthUrl,
+        'oauth',
+        'width=500,height=600,left=' + (window.screen.width / 2 - 250) + ',top=' + (window.screen.height / 2 - 300)
+      )
       
-      if (!newTab) {
-        // Popup blocked - fallback to same-window redirect
-        setError('Please allow pop-ups to sign in with Google in a new tab, or try again.')
+      if (!popup) {
+        // Popup blocked - show error
+        setError('Please allow pop-ups to sign in with Google, or try again.')
         setLoading(false)
         return
       }
@@ -208,7 +220,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess, externalError, o
       // Reset loading state immediately (user interaction is done)
       setLoading(false)
       
-      // Note: onAuthStateChange in App.jsx will detect SIGNED_IN event when OAuth completes
+      // Note: postMessage listener in App.jsx will detect AUTH_SUCCESS when popup completes
       // No need to reset auth-in-progress flag here since we're not navigating
     } catch (err) {
       setError(err.message || 'An error occurred')

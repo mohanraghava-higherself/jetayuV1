@@ -6,6 +6,7 @@ import { getUserContext } from './lib/userContext'
 import { useChat } from './contexts/ChatContext'
 import LandingPage from './components/LandingPage'
 import AuthModal from './components/AuthModal'
+import AuthCallback from './components/AuthCallback'
 import MyBookings from './components/MyBookings'
 import MyProfile from './components/MyProfile'
 import Sidebar from './components/Sidebar'
@@ -40,6 +41,7 @@ export default function App() {
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [pendingBookingSessionId, setPendingBookingSessionId] = useState(null)
   const [isAuthInProgress, setIsAuthInProgress] = useState(false) // Flag to disable chat-leave warnings during auth
+  const [redirectToBookingsAfterAuth, setRedirectToBookingsAfterAuth] = useState(false) // Flag to redirect to /my-bookings after login
   
   // Chat state from context (lives only in memory, no localStorage)
   const {
@@ -181,7 +183,8 @@ export default function App() {
 
           setAuthBlockingError(conflictMessage)
           setShowAuthModal(true)
-          await supabase.auth.signOut()
+          // DO NOT auto-logout here - let user see the error and logout manually if needed
+          // Auto-logout can cause 403 if session is in invalid state
         } else {
           setAuthBlockingError(null)
         }
@@ -241,9 +244,186 @@ export default function App() {
         retryBookingConfirmation(pendingBookingSessionId)
         setPendingBookingSessionId(null)
       }
+      
+      // If user was trying to access My Bookings, redirect after login
+      if (session?.user && redirectToBookingsAfterAuth) {
+        setRedirectToBookingsAfterAuth(false)
+        navigate('/my-bookings')
+      }
     })
 
     return () => subscription.unsubscribe()
+  }, [pendingBookingSessionId, redirectToBookingsAfterAuth, navigate])
+
+  // OAuth popup message listener: Listen for AUTH_SUCCESS from popup window
+  // When OAuth login completes in popup, popup sends postMessage and closes
+  // Main app detects login instantly without navigation or chat reset
+  useEffect(() => {
+    if (!isSupabaseConfigured) return
+
+    const handleMessage = async (event) => {
+      // Verify message origin for security
+      if (event.origin !== window.location.origin) return
+
+      // Handle AUTH_SUCCESS from OAuth popup
+      if (event.data?.type === 'AUTH_SUCCESS') {
+        try {
+          // Re-fetch session to get latest auth state
+          const { data: { session } } = await supabase.auth.getSession()
+          
+          // Update user state immediately
+          setUser(session?.user ?? null)
+          
+          // Enforce provider consistency (same logic as onAuthStateChange)
+          if (session?.user?.email) {
+            const attemptedProvider = session.user.app_metadata?.provider
+            if (attemptedProvider) {
+              try {
+                const response = await fetch(`${API_BASE}/auth/provider-check`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    email: session.user.email,
+                    attempted_provider: attemptedProvider
+                  })
+                })
+
+                if (response.ok) {
+                  const data = await response.json()
+                  if (data?.conflict) {
+                    const conflictMessage = attemptedProvider === 'google'
+                      ? 'This email is already registered. Please sign in using email.'
+                      : 'This account was created using Google. Please sign in with Google.'
+
+                    setAuthBlockingError(conflictMessage)
+                    setShowAuthModal(true)
+                    // DO NOT auto-logout here - let user see the error and logout manually if needed
+                  } else {
+                    setAuthBlockingError(null)
+                  }
+                }
+              } catch (error) {
+                console.warn('Provider consistency check failed:', error)
+              }
+            }
+          }
+          
+          // Reset auth-in-progress flag
+          setIsAuthInProgress(false)
+          
+          // If user just logged in and there's a pending booking, retry it
+          if (session?.user && pendingBookingSessionId) {
+            retryBookingConfirmation(pendingBookingSessionId)
+            setPendingBookingSessionId(null)
+          }
+          
+          // If user was trying to access My Bookings, redirect after login
+          if (session?.user && redirectToBookingsAfterAuth) {
+            setRedirectToBookingsAfterAuth(false)
+            navigate('/my-bookings')
+          }
+          
+          // DO NOT navigate - user stays on current route (/chat)
+          // DO NOT reset chat - chat state is preserved
+        } catch (error) {
+          console.warn('Failed to sync auth state from popup message:', error)
+        }
+      }
+    }
+
+    // Listen for postMessage events from OAuth popup
+    window.addEventListener('message', handleMessage)
+
+    return () => {
+      window.removeEventListener('message', handleMessage)
+    }
+  }, [pendingBookingSessionId])
+
+  // Cross-tab auth synchronization: Listen for storage events from other tabs
+  // When OAuth login happens in a new tab, this detects the localStorage change
+  // and syncs auth state in the original tab without requiring a refresh
+  useEffect(() => {
+    if (!isSupabaseConfigured) return
+
+    const handleStorageChange = async (e) => {
+      // Check if the changed key is a Supabase auth token
+      // Supabase stores auth tokens with keys like: sb-<project-ref>-auth-token
+      if (e.key && e.key.includes('sb-') && e.key.includes('auth')) {
+        // Only process if the value actually changed (not deletion)
+        if (e.newValue !== null && e.newValue !== e.oldValue) {
+          try {
+            // Re-fetch session to get latest auth state
+            const { data: { session } } = await supabase.auth.getSession()
+            
+            // Update user state
+            setUser(session?.user ?? null)
+            
+            // Enforce provider consistency (same logic as onAuthStateChange)
+            if (session?.user?.email) {
+              const attemptedProvider = session.user.app_metadata?.provider
+              if (attemptedProvider) {
+                try {
+                  const response = await fetch(`${API_BASE}/auth/provider-check`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      email: session.user.email,
+                      attempted_provider: attemptedProvider
+                    })
+                  })
+
+                  if (response.ok) {
+                    const data = await response.json()
+                    if (data?.conflict) {
+                      const conflictMessage = attemptedProvider === 'google'
+                        ? 'This email is already registered. Please sign in using email.'
+                        : 'This account was created using Google. Please sign in with Google.'
+
+                      setAuthBlockingError(conflictMessage)
+                      setShowAuthModal(true)
+                      // DO NOT auto-logout here - let user see the error and logout manually if needed
+                      // Auto-logout can cause 403 if session is in invalid state
+                    } else {
+                      setAuthBlockingError(null)
+                    }
+                  }
+                } catch (error) {
+                  console.warn('Provider consistency check failed:', error)
+                }
+              }
+            }
+            
+            // Reset auth-in-progress flag
+            setIsAuthInProgress(false)
+            
+            // If user just logged in and there's a pending booking, retry it
+            if (session?.user && pendingBookingSessionId) {
+              retryBookingConfirmation(pendingBookingSessionId)
+              setPendingBookingSessionId(null)
+            }
+            
+            // If user was trying to access My Bookings, redirect after login
+            if (session?.user && redirectToBookingsAfterAuth) {
+              setRedirectToBookingsAfterAuth(false)
+              navigate('/my-bookings')
+            }
+          } catch (error) {
+            console.warn('Failed to sync auth state from storage event:', error)
+          }
+        } else if (e.newValue === null && e.oldValue !== null) {
+          // Auth token was deleted (logout in another tab)
+          setUser(null)
+          setIsAuthInProgress(false)
+        }
+      }
+    }
+
+    // Listen for storage events (fires when localStorage changes in other tabs)
+    window.addEventListener('storage', handleStorageChange)
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange)
+    }
   }, [pendingBookingSessionId])
 
   // Auto-scroll to bottom on new messages
@@ -289,6 +469,8 @@ export default function App() {
 
   const handleMyBookings = () => {
     if (!user) {
+      // Set flag to redirect to /my-bookings after successful login
+      setRedirectToBookingsAfterAuth(true)
       setShowAuthModal(true)
       return
     }
@@ -304,13 +486,17 @@ export default function App() {
   }
 
   const handleLogout = () => {
+    // ALWAYS clear user state and chat state regardless of Supabase response
+    // This ensures logout UX works even if signOut returned 403
+    setUser(null)
     resetSession()
-    navigate('/')
+    navigate('/', { replace: true })
   }
 
   const handleAuthSuccess = async () => {
     setShowAuthModal(false)
     setAuthBlockingError(null)
+    
     // If there's a pending booking, retry it after auth success
     if (pendingBookingSessionId) {
       // Resend the last user message to trigger confirmation with auth
@@ -322,6 +508,12 @@ export default function App() {
         }, 500)
       }
       setPendingBookingSessionId(null)
+    }
+    
+    // If user was trying to access My Bookings, redirect after login
+    if (redirectToBookingsAfterAuth) {
+      setRedirectToBookingsAfterAuth(false)
+      navigate('/my-bookings')
     }
   }
 
@@ -647,15 +839,15 @@ export default function App() {
         // Lead successfully created - add system message with CTAs
         setBookingConfirmed(false) // Don't show separate confirmation UI
         
-        // Add final system message with CTAs based on auth state
+        // Add final system message with My Bookings CTA (always shown)
         messageIdCounter.current += 1
         const finalMessage = {
           id: `assistant-${messageIdCounter.current}`,
           role: 'assistant',
           content: 'Your request has been submitted. Our operators will contact you shortly.',
           isNew: true,
-          requiresAuth: !user, // Show Login CTA if not logged in
-          showMyBookingsLink: !!user, // Show My Bookings link if logged in
+          requiresAuth: false, // Never show login CTA here
+          showMyBookingsLink: true, // Always show My Bookings CTA
         }
         setMessages(prev => [...prev, finalMessage])
         
@@ -781,6 +973,7 @@ export default function App() {
             externalError={authBlockingError}
             onAuthStart={() => setIsAuthInProgress(true)}
             onAuthEnd={() => setIsAuthInProgress(false)}
+            user={user}
           />
         </>
       )
@@ -832,6 +1025,7 @@ export default function App() {
           externalError={authBlockingError}
           onAuthStart={() => setIsAuthInProgress(true)}
           onAuthEnd={() => setIsAuthInProgress(false)}
+          user={user}
         />
       </>
     )
@@ -1238,6 +1432,7 @@ export default function App() {
             externalError={authBlockingError}
             onAuthStart={() => setIsAuthInProgress(true)}
             onAuthEnd={() => setIsAuthInProgress(false)}
+            user={user}
           />
 
           <PhotoGalleryModal
@@ -1720,6 +1915,7 @@ export default function App() {
         onClose={handleAuthClose}
         onSuccess={handleAuthSuccess}
         externalError={authBlockingError}
+        user={user}
       />
 
       {/* Photo Gallery Modal */}
@@ -1742,6 +1938,7 @@ export default function App() {
         <Route path="/chat/session/:session_id" element={<ChatRoute />} />
         <Route path="/my-bookings" element={<MyBookingsRoute />} />
         <Route path="/profile" element={<MyProfileRoute />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
       </Routes>
     </div>
   )

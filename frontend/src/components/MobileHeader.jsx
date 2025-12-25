@@ -102,9 +102,18 @@ export default function MobileHeader({ user, onAuthClick, onMyBookings, onMyProf
 
   const handleLogoutClick = async () => {
     setShowProfileMenu(false)
-    await supabase.auth.signOut()
-    if (onLogout) {
-      onLogout()
+    
+    try {
+      await supabase.auth.signOut({ scope: 'local' })
+    } catch (err) {
+      // EXPECTED: 403 can happen, DO NOT BLOCK LOGOUT
+      console.warn('[LOGOUT] Supabase signOut failed (ignored):', err)
+    } finally {
+      // ALWAYS run local cleanup regardless of Supabase response
+      // Logout UX must not depend on Supabase accepting the request
+      if (onLogout) {
+        onLogout()
+      }
     }
   }
 
