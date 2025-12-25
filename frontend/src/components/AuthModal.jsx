@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useLocation } from 'react-router-dom'
 import { supabase, isSupabaseConfigured } from '../lib/supabase'
 
 const API_BASE = import.meta.env.VITE_API_URL 
@@ -29,7 +30,8 @@ async function checkProviderConflict(email, attemptedProvider) {
   }
 }
 
-export default function AuthModal({ isOpen, onClose, onSuccess, externalError }) {
+export default function AuthModal({ isOpen, onClose, onSuccess, externalError, onAuthStart, onAuthEnd }) {
+  const location = useLocation()
   // Unified modal state: 'login' | 'signup' | 'forgot_password' | 'reset_password' | 'reset_success'
   const [modalState, setModalState] = useState('login')
   const [mode, setMode] = useState('oauth') // 'oauth' or 'email'
@@ -89,6 +91,10 @@ export default function AuthModal({ isOpen, onClose, onSuccess, externalError })
     setConfirmPassword('')
     setFullName('')
     setPhone('')
+    // Reset auth-in-progress flag when modal is closed
+    if (onAuthEnd) {
+      onAuthEnd()
+    }
     onClose?.()
   }
 
@@ -174,18 +180,36 @@ export default function AuthModal({ isOpen, onClose, onSuccess, externalError })
     }
 
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider,
-        options: {
-          redirectTo: `${window.location.origin}/`,
-        },
-      })
-      if (error) {
-        if (error.message.includes('Invalid API key')) {
-          throw new Error('Invalid Supabase API key. Please check your .env file and restart the dev server.')
-        }
-        throw error
+      // Determine redirect URL: if user is on /chat, redirect back to /chat after login
+      const redirectPath = location.pathname.startsWith('/chat') ? '/chat' : '/'
+      const redirectTo = `${window.location.origin}${redirectPath}`
+      
+      // Get Supabase URL from environment
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      if (!supabaseUrl) {
+        throw new Error('Supabase URL not configured')
       }
+
+      // Construct OAuth URL manually to open in new tab
+      // Format: https://<project>.supabase.co/auth/v1/authorize?provider=google&redirect_to=<encoded_url>
+      const oauthUrl = `${supabaseUrl}/auth/v1/authorize?provider=${provider}&redirect_to=${encodeURIComponent(redirectTo)}`
+      
+      // Open OAuth in new tab (isolates auth flow from main app)
+      // This prevents chat-leave warnings and navigation issues
+      const newTab = window.open(oauthUrl, '_blank')
+      
+      if (!newTab) {
+        // Popup blocked - fallback to same-window redirect
+        setError('Please allow pop-ups to sign in with Google in a new tab, or try again.')
+        setLoading(false)
+        return
+      }
+      
+      // Reset loading state immediately (user interaction is done)
+      setLoading(false)
+      
+      // Note: onAuthStateChange in App.jsx will detect SIGNED_IN event when OAuth completes
+      // No need to reset auth-in-progress flag here since we're not navigating
     } catch (err) {
       setError(err.message || 'An error occurred')
       console.error('OAuth error:', err)

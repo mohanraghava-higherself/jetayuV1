@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
 import { getUserContext } from './lib/userContext'
+import { useChat } from './contexts/ChatContext'
 import LandingPage from './components/LandingPage'
 import AuthModal from './components/AuthModal'
 import MyBookings from './components/MyBookings'
@@ -38,27 +39,43 @@ export default function App() {
   const view = getViewFromPath(location.pathname)
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [pendingBookingSessionId, setPendingBookingSessionId] = useState(null)
+  const [isAuthInProgress, setIsAuthInProgress] = useState(false) // Flag to disable chat-leave warnings during auth
   
-  // Chat state
-  const [sessionId, setSessionId] = useState(
-    () => localStorage.getItem('jetayu_session_id')
-  )
-  const [messages, setMessages] = useState([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [showJets, setShowJets] = useState(false)
-  const [aircraft, setAircraft] = useState([])
-  const [aircraftNavigationIntent, setAircraftNavigationIntent] = useState(null)
-  const [leadState, setLeadState] = useState(null)
-  const [bookingConfirmed, setBookingConfirmed] = useState(false)
-  const [selectedAircraft, setSelectedAircraft] = useState(null) // Confirmed aircraft from backend
-  const [previewAircraft, setPreviewAircraft] = useState(null) // Preview panel state (user browsing)
-  const [showPhotoGallery, setShowPhotoGallery] = useState(false)
+  // Chat state from context (lives only in memory, no localStorage)
+  const {
+    sessionId,
+    setSessionId,
+    messages,
+    setMessages,
+    isLoading,
+    setIsLoading,
+    showJets,
+    setShowJets,
+    aircraft,
+    setAircraft,
+    aircraftNavigationIntent,
+    setAircraftNavigationIntent,
+    leadState,
+    setLeadState,
+    bookingConfirmed,
+    setBookingConfirmed,
+    selectedAircraft,
+    setSelectedAircraft,
+    previewAircraft,
+    setPreviewAircraft,
+    showPhotoGallery,
+    setShowPhotoGallery,
+    chatStarted,
+    setChatStarted,
+    hasInitialized,
+    prevRoutePaxRef,
+    messageIdCounter,
+    prevMessageCountRef,
+    resetChat,
+  } = useChat()
+  
   const [isMobile, setIsMobile] = useState(false)
   const messagesEndRef = useRef(null)
-  const hasInitialized = useRef(false)
-  const prevRoutePaxRef = useRef({ route_from: null, route_to: null, pax: null })
-  const messageIdCounter = useRef(0)
-  const prevMessageCountRef = useRef(0)
   const scrollContainerRef = useRef(null)
 
   // Mobile detection
@@ -72,35 +89,67 @@ export default function App() {
   }, [])
 
   // Disable body scroll on mobile (global scroll rule)
+  // NOTE: Do NOT set height on html/body - it breaks mobile keyboard resizing
   useEffect(() => {
     if (isMobile) {
       document.documentElement.style.overflow = 'hidden'
-      document.documentElement.style.height = '100vh'
       document.body.style.overflow = 'hidden'
-      document.body.style.height = '100vh'
       document.body.style.width = '100%'
     } else {
       document.documentElement.style.overflow = ''
-      document.documentElement.style.height = ''
       document.body.style.overflow = ''
-      document.body.style.height = ''
       document.body.style.width = ''
     }
     return () => {
       document.documentElement.style.overflow = ''
-      document.documentElement.style.height = ''
       document.body.style.overflow = ''
-      document.body.style.height = ''
       document.body.style.width = ''
     }
   }, [isMobile])
 
-  // Persist sessionId
+  // Refresh warning on /chat route - DISABLED during auth
   useEffect(() => {
-    if (sessionId) {
-      localStorage.setItem('jetayu_session_id', sessionId)
+    const handleBeforeUnload = (e) => {
+      // DO NOT show warning if auth is in progress (OAuth redirect)
+      if (isAuthInProgress) {
+        return
+      }
+      if (location.pathname.startsWith('/chat')) {
+        e.preventDefault()
+        e.returnValue = 'Chat may not be restored. Do you want to continue?'
+        return e.returnValue
+      }
     }
-  }, [sessionId])
+    
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [location.pathname, isAuthInProgress])
+
+  // Post-refresh redirect: if user was on /chat before refresh, redirect to / after page loads
+  // This handles the case where user confirms refresh on /chat
+  useEffect(() => {
+    const wasOnChatBeforeRefresh = sessionStorage.getItem('was_on_chat')
+    if (wasOnChatBeforeRefresh === 'true' && location.pathname.startsWith('/chat')) {
+      // Clear the flag and redirect to home (chat will be naturally cleared)
+      sessionStorage.removeItem('was_on_chat')
+      navigate('/', { replace: true })
+    }
+    // Set flag when we're on /chat (for next refresh detection)
+    if (location.pathname.startsWith('/chat')) {
+      sessionStorage.setItem('was_on_chat', 'true')
+    } else {
+      sessionStorage.removeItem('was_on_chat')
+    }
+  }, [location.pathname, navigate])
+
+  // Desktop route override: redirect / to /chat if chatStarted === true (DESKTOP ONLY)
+  useEffect(() => {
+    if (!isMobile && chatStarted && location.pathname === '/') {
+      navigate('/chat', { replace: true })
+    }
+  }, [location.pathname, chatStarted, isMobile, navigate])
 
   // Initialize auth state
   useEffect(() => {
@@ -162,8 +211,15 @@ export default function App() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
+      // CRITICAL: Only update user state - NEVER reset chat on auth changes
+      // Chat state is independent of auth state and must be preserved during login/logout
       setUser(session?.user ?? null)
       enforceProviderConsistency(session)
+      
+      // Reset auth-in-progress flag when auth completes (success or failure)
+      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
+        setIsAuthInProgress(false)
+      }
       
       // Detect PASSWORD_RECOVERY event and open auth modal
       if (event === 'PASSWORD_RECOVERY') {
@@ -180,6 +236,7 @@ export default function App() {
       }
       
       // If user just logged in and there's a pending booking, retry it
+      // Chat remains intact - backend will attach user to existing session
       if (session?.user && pendingBookingSessionId) {
         retryBookingConfirmation(pendingBookingSessionId)
         setPendingBookingSessionId(null)
@@ -277,23 +334,10 @@ export default function App() {
     // Don't send any confirmation message - backend will handle the state
   }
 
-  // Explicit new chat reset: clears persisted session and local state
+  // Explicit new chat reset: clears chat state (no localStorage)
   const resetSession = () => {
-    localStorage.removeItem('jetayu_session_id')
-    setSessionId(null)
-    setMessages([])
-    setShowJets(false)
-    setAircraft([])
-    setLeadState(null)
-    setBookingConfirmed(false)
-    setSelectedAircraft(null)
-    setPreviewAircraft(null)
-    setShowPhotoGallery(false)
+    resetChat()
     setPendingBookingSessionId(null)
-    hasInitialized.current = false
-    prevRoutePaxRef.current = { route_from: null, route_to: null, pax: null }
-    prevMessageCountRef.current = 0
-    messageIdCounter.current = 0
   }
 
   const startSession = async () => {
@@ -327,6 +371,7 @@ export default function App() {
       const data = await response.json()
       
       setSessionId(data.session_id)
+      setChatStarted(true) // Mark chat as started when session is created
       messageIdCounter.current += 1
       setMessages([{
         id: `assistant-${messageIdCounter.current}`,
@@ -371,7 +416,7 @@ export default function App() {
     let currentSessionId = sessionId
     if (!currentSessionId) {
       await startSession()
-      currentSessionId = sessionId || localStorage.getItem('jetayu_session_id')
+      currentSessionId = sessionId
     }
 
     try {
@@ -406,10 +451,12 @@ export default function App() {
 
       if (data.session_id && data.session_id !== sessionId) {
         setSessionId(data.session_id)
+        setChatStarted(true) // Mark chat as started when session is created
       }
 
-      if (data.session_id && data.session_id !== sessionId) {
-        setSessionId(data.session_id)
+      // Mark chat as started when first structured message is sent
+      if (!chatStarted) {
+        setChatStarted(true)
       }
 
       messageIdCounter.current += 1
@@ -475,6 +522,11 @@ export default function App() {
     setMessages(prev => [...prev, userMessage])
     setIsLoading(true)
     
+    // Mark chat as started when first user message is sent
+    if (!chatStarted) {
+      setChatStarted(true)
+    }
+    
     // Check if user is asking for different aircraft options
     // This will trigger backend to clear selected_aircraft
     const isAskingForAircraft = /(show|see|other|different|change|another|more|options?|jets?|aircraft)/i.test(content)
@@ -486,7 +538,7 @@ export default function App() {
     let currentSessionId = sessionId
     if (!currentSessionId && !skipStartSession) {
       await startSession()
-      currentSessionId = sessionId || localStorage.getItem('jetayu_session_id')
+      currentSessionId = sessionId
     }
 
     try {
@@ -524,6 +576,7 @@ export default function App() {
 
       if (data.session_id && data.session_id !== sessionId) {
         setSessionId(data.session_id)
+        setChatStarted(true) // Mark chat as started when session is created
       }
 
       // Batch all state updates to prevent cascading re-renders
@@ -591,9 +644,22 @@ export default function App() {
       }
 
       if (data.booking_confirmed) {
-        // Booking confirmed - keep user in chat, message already includes guidance
-        // No auto-navigation - let user stay in conversation
+        // Lead successfully created - add system message with CTAs
         setBookingConfirmed(false) // Don't show separate confirmation UI
+        
+        // Add final system message with CTAs based on auth state
+        messageIdCounter.current += 1
+        const finalMessage = {
+          id: `assistant-${messageIdCounter.current}`,
+          role: 'assistant',
+          content: 'Your request has been submitted. Our operators will contact you shortly.',
+          isNew: true,
+          requiresAuth: !user, // Show Login CTA if not logged in
+          showMyBookingsLink: !!user, // Show My Bookings link if logged in
+        }
+        setMessages(prev => [...prev, finalMessage])
+        
+        // Chat continues - no redirect (user stays in conversation)
       }
     } catch (error) {
       console.error('Failed to send message:', error)
@@ -689,12 +755,13 @@ export default function App() {
             onMyBookings={handleMyBookings}
             onMyProfile={handleMyProfile}
             onLogout={handleLogout}
+            onResetChat={resetChat}
           />
           <div
             style={{
               marginTop: '64px',
               width: '100%',
-              height: 'calc(100vh - 64px)',
+              height: 'calc(100dvh - 64px)',
               backgroundColor: '#060201',
               backdropFilter: 'blur(24px)',
               position: 'relative',
@@ -712,6 +779,8 @@ export default function App() {
             onClose={handleAuthClose}
             onSuccess={handleAuthSuccess}
             externalError={authBlockingError}
+            onAuthStart={() => setIsAuthInProgress(true)}
+            onAuthEnd={() => setIsAuthInProgress(false)}
           />
         </>
       )
@@ -724,7 +793,14 @@ export default function App() {
           <Sidebar 
             activeView={view} 
             onNavigate={(viewName) => {
-              if (viewName === 'landing') navigate('/')
+              // Desktop route override: if chatStarted, landing navigates to /chat instead
+              if (viewName === 'landing') {
+                if (!isMobile && chatStarted) {
+                  navigate('/chat')
+                } else {
+                  navigate('/')
+                }
+              }
               if (viewName === 'chat') navigate('/chat')
               if (viewName === 'bookings') handleMyBookings()
               if (viewName === 'profile') handleMyProfile()
@@ -754,6 +830,8 @@ export default function App() {
           onClose={handleAuthClose}
           onSuccess={handleAuthSuccess}
           externalError={authBlockingError}
+          onAuthStart={() => setIsAuthInProgress(true)}
+          onAuthEnd={() => setIsAuthInProgress(false)}
         />
       </>
     )
@@ -801,11 +879,12 @@ export default function App() {
             onMyBookings={handleMyBookings}
             onMyProfile={handleMyProfile}
             onLogout={handleLogout}
+            onResetChat={resetChat}
           />
           <div
             style={{
               marginTop: '64px',
-              height: 'calc(100vh - 64px)',
+              height: 'calc(100dvh - 64px)',
               width: '100%',
               backgroundColor: '#060201',
               backdropFilter: 'blur(24px)',
@@ -843,6 +922,8 @@ export default function App() {
                         isNew={message.isNew}
                         requiresAuth={message.requiresAuth}
                         onAuthClick={() => setShowAuthModal(true)}
+                        showMyBookingsLink={message.showMyBookingsLink || false}
+                        onMyBookingsClick={message.showMyBookingsLink ? handleMyBookings : undefined}
                       />
                     </motion.div>
                   ))}
@@ -875,9 +956,10 @@ export default function App() {
             {/* Chat Input - Fixed at bottom (NOT in scroll container) */}
             <div style={{ 
               flexShrink: 0,
-              backgroundColor: '#060201', 
+              width: '100%',
+              backgroundColor: 'transparent',
               padding: '16px',
-              paddingBottom: 'max(28px, calc(16px + 12px + env(safe-area-inset-bottom)))',
+              paddingBottom: `max(28px, calc(16px + 12px + env(safe-area-inset-bottom)))`,
               zIndex: 10
             }}>
               <ChatInput 
@@ -1154,6 +1236,8 @@ export default function App() {
             onClose={handleAuthClose}
             onSuccess={handleAuthSuccess}
             externalError={authBlockingError}
+            onAuthStart={() => setIsAuthInProgress(true)}
+            onAuthEnd={() => setIsAuthInProgress(false)}
           />
 
           <PhotoGalleryModal
@@ -1173,7 +1257,14 @@ export default function App() {
           <Sidebar 
             activeView="chat" 
             onNavigate={(viewName) => {
-              if (viewName === 'landing') navigate('/')
+              // Desktop route override: if chatStarted, landing navigates to /chat instead
+              if (viewName === 'landing') {
+                if (!isMobile && chatStarted) {
+                  navigate('/chat', { replace: true })
+                } else {
+                  navigate('/')
+                }
+              }
               if (viewName === 'chat') navigate('/chat')
               if (viewName === 'bookings') handleMyBookings()
               if (viewName === 'profile') handleMyProfile()
@@ -1246,6 +1337,8 @@ export default function App() {
                         isNew={message.isNew}
                         requiresAuth={message.requiresAuth}
                         onAuthClick={() => setShowAuthModal(true)}
+                        showMyBookingsLink={message.showMyBookingsLink || false}
+                        onMyBookingsClick={message.showMyBookingsLink ? handleMyBookings : undefined}
                       />
                     </motion.div>
                   ))}
@@ -1642,7 +1735,7 @@ export default function App() {
 
   // Main Routes
   return (
-    <div style={isMobile ? { height: '100vh', overflow: 'hidden', width: '100%' } : {}}>
+    <div style={isMobile ? { height: '100dvh', overflow: 'hidden', width: '100%' } : {}}>
       <Routes>
         <Route path="/" element={<LandingRoute />} />
         <Route path="/chat" element={<ChatRoute />} />

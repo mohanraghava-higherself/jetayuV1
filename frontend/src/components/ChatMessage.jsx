@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion'
 import { forwardRef } from 'react'
 
-const ChatMessage = forwardRef(function ChatMessage({ message, isUser, isNew, requiresAuth, onAuthClick, showBookingCTA, onBookingCTAClick }, ref) {
+const ChatMessage = forwardRef(function ChatMessage({ message, isUser, isNew, requiresAuth, onAuthClick, showBookingCTA, onBookingCTAClick, showMyBookingsLink, onMyBookingsClick }, ref) {
   return (
     <div
       ref={ref}
@@ -73,7 +73,7 @@ const ChatMessage = forwardRef(function ChatMessage({ message, isUser, isNew, re
             fontWeight: 300,
             color: '#FAFAFA',
             margin: 0,
-            marginBottom: requiresAuth ? '16px' : 0
+            marginBottom: (requiresAuth || showMyBookingsLink || showBookingCTA) ? '16px' : 0
           }}>
             {message}
           </p>
@@ -147,6 +147,42 @@ const ChatMessage = forwardRef(function ChatMessage({ message, isUser, isNew, re
             >
               <span>View booking status</span>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
+            </motion.button>
+          )}
+          {showMyBookingsLink && onMyBookingsClick && (
+            <motion.button
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: 0.2 }}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={onMyBookingsClick}
+              style={{
+                marginTop: '12px',
+                padding: '10px 20px',
+                backgroundColor: '#FFFFFF',
+                color: '#0a0a0a',
+                borderRadius: '8px',
+                fontSize: '14px',
+                fontWeight: 500,
+                border: 'none',
+                cursor: 'pointer',
+                transition: 'background-color 0.2s',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.backgroundColor = '#f5f5f5'
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.backgroundColor = '#FFFFFF'
+              }}
+            >
+              <span>My Bookings</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M5 12h14M12 5l7 7-7 7" />
               </svg>
             </motion.button>

@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { supabase } from '../lib/supabase'
 
-export default function MobileHeader({ user, onAuthClick, onMyBookings, onMyProfile, onLogout }) {
+export default function MobileHeader({ user, onAuthClick, onMyBookings, onMyProfile, onLogout, onResetChat }) {
   const location = useLocation()
   const navigate = useNavigate()
   const [showMenu, setShowMenu] = useState(false)
@@ -11,8 +11,10 @@ export default function MobileHeader({ user, onAuthClick, onMyBookings, onMyProf
   const menuRef = useRef(null)
   const profileMenuRef = useRef(null)
 
-  // Determine if we should show back arrow or menu icon
-  const showBackArrow = ['/chat', '/my-bookings', '/profile'].some(path => 
+  // On /chat, always show menu icon (not back arrow)
+  // On other routes, show back arrow
+  const isOnChatRoute = location.pathname === '/chat' || location.pathname.startsWith('/chat/')
+  const showBackArrow = !isOnChatRoute && ['/my-bookings', '/profile'].some(path => 
     location.pathname === path || location.pathname.startsWith(path)
   )
 
@@ -46,7 +48,8 @@ export default function MobileHeader({ user, onAuthClick, onMyBookings, onMyProf
   }, [showMenu, showProfileMenu])
 
   const handleBack = () => {
-    navigate('/')
+    // Back button from bookings/profile goes back to /chat (preserves chat)
+    navigate('/chat')
   }
 
   const handleMenuClick = () => {
@@ -66,10 +69,28 @@ export default function MobileHeader({ user, onAuthClick, onMyBookings, onMyProf
   }
 
   const handleMyBookingsClick = () => {
+    // Navigate to My Bookings - NO confirmation, chat is preserved
     setShowMenu(false)
     if (onMyBookings) {
       onMyBookings()
     }
+  }
+  
+  const handleHomeClick = () => {
+    // If on /chat, show confirmation before navigating and resetting chat
+    if (isOnChatRoute) {
+      const confirmed = window.confirm('Chat may not be saved. Do you want to continue?')
+      if (!confirmed) {
+        setShowMenu(false)
+        return
+      }
+      // User confirmed - reset chat before navigating
+      if (onResetChat) {
+        onResetChat()
+      }
+    }
+    setShowMenu(false)
+    navigate('/')
   }
 
   const handleMyProfileClick = () => {
@@ -234,29 +255,31 @@ export default function MobileHeader({ user, onAuthClick, onMyBookings, onMyProf
                 overflowY: 'auto'
               }}
             >
+              {/* Menu options vary by route */}
+              {/* On /chat: Show Home and My Bookings */}
+              {/* On home (/): Show only My Bookings */}
+              {isOnChatRoute && (
+                <button
+                  onClick={handleHomeClick}
+                  style={{
+                    width: '100%',
+                    padding: '16px',
+                    textAlign: 'left',
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    borderRadius: '12px',
+                    color: '#FFFFFF',
+                    fontSize: '16px',
+                    fontFamily: 'Outfit, sans-serif',
+                    cursor: 'pointer',
+                    marginBottom: '12px'
+                  }}
+                >
+                  Home
+                </button>
+              )}
               <button
                 onClick={handleMyBookingsClick}
-                style={{
-                  width: '100%',
-                  padding: '16px',
-                  textAlign: 'left',
-                  backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid rgba(255, 255, 255, 0.1)',
-                  borderRadius: '12px',
-                  color: '#FFFFFF',
-                  fontSize: '16px',
-                  fontFamily: 'Outfit, sans-serif',
-                  cursor: 'pointer',
-                  marginBottom: '12px'
-                }}
-              >
-                My Bookings
-              </button>
-              <button
-                onClick={() => {
-                  setShowMenu(false)
-                  navigate('/')
-                }}
                 style={{
                   width: '100%',
                   padding: '16px',
@@ -270,7 +293,7 @@ export default function MobileHeader({ user, onAuthClick, onMyBookings, onMyProf
                   cursor: 'pointer'
                 }}
               >
-                Home
+                My Bookings
               </button>
             </motion.div>
           </>

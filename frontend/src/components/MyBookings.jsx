@@ -364,10 +364,28 @@ export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, on
               <h1 className="font-display text-4xl font-light text-jet-100 tracking-tight">
                 My Bookings
               </h1>
-              {!loading && !error && bookings.length > 0 && onStartNewBooking && (
+              {!loading && !error && bookings.length > 0 && (
                 <button
-                  onClick={onStartNewBooking}
-                  className="px-6 py-3 bg-gold-500 hover:bg-gold-600 text-jet-950 font-medium rounded-lg transition-all duration-200 flex items-center gap-2"
+                  onClick={() => {
+                    const confirmed = window.confirm('Chat may be lost. Do you want to continue?')
+                    if (confirmed) {
+                      navigate('/')
+                    }
+                  }}
+                  className="px-6 py-3 font-medium rounded-lg transition-all duration-200 flex items-center gap-2"
+                  style={{
+                    background: 'linear-gradient(180deg, #683F49 0%, #4A1E35 100%)',
+                    border: '1px solid rgba(255, 255, 255, 0.25)',
+                    color: '#FFFFFF',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = 'linear-gradient(180deg, #7A4F59 0%, #5A2E45 100%)'
+                    e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.3)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'linear-gradient(180deg, #683F49 0%, #4A1E35 100%)'
+                    e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.25)'
+                  }}
                 >
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
@@ -412,17 +430,34 @@ export default function MyBookings({ onBack, user, onAuthClick, onMyBookings, on
           {!loading && !error && bookings.length === 0 && (
             <div className="text-center py-12">
               <p className="text-jet-400 mb-4">No bookings yet</p>
-              {onStartNewBooking ? (
-                <button
-                  onClick={onStartNewBooking}
-                  className="px-6 py-3 bg-gold-500 hover:bg-gold-600 text-jet-950 font-medium rounded-lg transition-all duration-200 flex items-center gap-2 mx-auto"
-                >
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                  </svg>
-                  Start a Conversation
-                </button>
-              ) : (
+              <button
+                onClick={() => {
+                  const confirmed = window.confirm('Chat may be lost. Do you want to continue?')
+                  if (confirmed) {
+                    navigate('/')
+                  }
+                }}
+                className="px-6 py-3 font-medium rounded-lg transition-all duration-200 flex items-center gap-2 mx-auto"
+                style={{
+                  background: 'linear-gradient(180deg, #683F49 0%, #4A1E35 100%)',
+                  border: '1px solid rgba(255, 255, 255, 0.25)',
+                  color: '#FFFFFF',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'linear-gradient(180deg, #7A4F59 0%, #5A2E45 100%)'
+                  e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.3)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'linear-gradient(180deg, #683F49 0%, #4A1E35 100%)'
+                  e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.25)'
+                }}
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                Start a Conversation
+              </button>
+              {onBack && (
                 <button
                   onClick={onBack}
                   className="px-6 py-3 bg-gold-500 hover:bg-gold-600 text-jet-950 font-medium rounded-lg transition-all duration-200"
