@@ -79,6 +79,7 @@ export default function App() {
   const [isMobile, setIsMobile] = useState(false)
   const messagesEndRef = useRef(null)
   const scrollContainerRef = useRef(null)
+  const isAuthInProgressRef = useRef(false) // Ref to track auth state without closure issues
 
   // Mobile detection
   useEffect(() => {
@@ -113,7 +114,8 @@ export default function App() {
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       // DO NOT show warning if auth is in progress (OAuth redirect)
-      if (isAuthInProgress) {
+      // Use ref to avoid closure issues
+      if (isAuthInProgressRef.current) {
         return
       }
       if (location.pathname.startsWith('/chat')) {
@@ -152,6 +154,214 @@ export default function App() {
       navigate('/chat', { replace: true })
     }
   }, [location.pathname, chatStarted, isMobile, navigate])
+
+  // Mobile OAuth redirect detection: Check for auth_login_intent on page load
+  // Mobile browsers use full-page redirect instead of popup, so we detect completion here
+  // Works on HOME (/) and /chat routes
+  useEffect(() => {
+    if (!isSupabaseConfigured) return
+    
+    // Check on HOME (/) or /chat route (where mobile OAuth redirects to)
+    if (location.pathname !== '/' && !location.pathname.startsWith('/chat')) return
+    
+    const checkMobileAuthCompletion = async () => {
+      const authIntent = sessionStorage.getItem('auth_login_intent')
+      
+      // If auth intent flag exists, user just returned from OAuth
+      if (authIntent) {
+        try {
+          // Clear flag immediately to prevent re-triggering
+          sessionStorage.removeItem('auth_login_intent')
+          
+          // Check for session (Supabase processes redirect automatically)
+          const { data: { session } } = await supabase.auth.getSession()
+          
+          if (session?.user) {
+            // Auth succeeded - update state and close modal
+            setUser(session.user)
+            setShowAuthModal(false)
+            setAuthBlockingError(null)
+            setIsAuthInProgress(false)
+            isAuthInProgressRef.current = false
+            
+            // Clear mobile OAuth flags
+            sessionStorage.removeItem('mobile_oauth_pending')
+            
+            // Enforce provider consistency
+            const attemptedProvider = session.user.app_metadata?.provider
+            if (attemptedProvider) {
+              try {
+                const response = await fetch(`${API_BASE}/auth/provider-check`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    email: session.user.email,
+                    attempted_provider: attemptedProvider
+                  })
+                })
+
+                if (response.ok) {
+                  const data = await response.json()
+                  if (data?.conflict) {
+                    const conflictMessage = attemptedProvider === 'google'
+                      ? 'This email is already registered. Please sign in using email.'
+                      : 'This account was created using Google. Please sign in with Google.'
+
+                    setAuthBlockingError(conflictMessage)
+                    setShowAuthModal(true)
+                  } else {
+                    setAuthBlockingError(null)
+                  }
+                }
+              } catch (error) {
+                console.warn('Provider consistency check failed:', error)
+              }
+            }
+            
+            // If user was trying to access My Bookings, redirect after login
+            if (redirectToBookingsAfterAuth) {
+              setRedirectToBookingsAfterAuth(false)
+              navigate('/my-bookings')
+            }
+            
+            // DO NOT reset chat - chat state is preserved
+          }
+        } catch (error) {
+          console.warn('Failed to check mobile auth completion:', error)
+          // Clear flag even on error to prevent infinite checks
+          sessionStorage.removeItem('auth_login_intent')
+        }
+      }
+    }
+
+    checkMobileAuthCompletion()
+  }, [location.pathname, isSupabaseConfigured, redirectToBookingsAfterAuth, navigate])
+
+  // Global mobile OAuth recovery: Detect auth completion when user returns to tab
+  // Mobile browsers freeze background tabs, so onAuthStateChange doesn't fire
+  // This checks on focus and visibility change to recover auth state and restore chat
+  useEffect(() => {
+    if (!isSupabaseConfigured) return
+
+    const checkMobileOAuthRecovery = async () => {
+      const mobileOAuthPending = sessionStorage.getItem('mobile_oauth_pending')
+      
+      // If mobile OAuth is pending, check for session
+      if (mobileOAuthPending === '1') {
+        try {
+          const { data: { session } } = await supabase.auth.getSession()
+          
+          if (session?.user) {
+            // Auth succeeded - update state and close modal
+            setUser(session.user)
+            setShowAuthModal(false)
+            setAuthBlockingError(null)
+            setIsAuthInProgress(false)
+            isAuthInProgressRef.current = false
+            
+            // STEP 2: Restore chat from snapshot (if exists)
+            // This preserves chat state when user returns from OAuth in new tab
+            const chatSnapshotStr = sessionStorage.getItem('chat_snapshot')
+            if (chatSnapshotStr) {
+              try {
+                const chatSnapshot = JSON.parse(chatSnapshotStr)
+                
+                // Restore messages and sessionId from snapshot
+                // DO NOT call backend - this is temporary local restoration
+                if (chatSnapshot.messages && chatSnapshot.messages.length > 0) {
+                  setMessages(chatSnapshot.messages)
+                  if (chatSnapshot.sessionId) {
+                    setSessionId(chatSnapshot.sessionId)
+                  }
+                  // Mark chat as started if we have messages
+                  if (!chatStarted) {
+                    setChatStarted(true)
+                  }
+                }
+              } catch (error) {
+                console.warn('Failed to restore chat snapshot:', error)
+              }
+            }
+            
+            // Clear flags (but keep chat_snapshot for now - cleared on refresh/logout)
+            sessionStorage.removeItem('mobile_oauth_pending')
+            sessionStorage.removeItem('auth_login_intent')
+            
+            // Enforce provider consistency
+            const attemptedProvider = session.user.app_metadata?.provider
+            if (attemptedProvider) {
+              try {
+                const response = await fetch(`${API_BASE}/auth/provider-check`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    email: session.user.email,
+                    attempted_provider: attemptedProvider
+                  })
+                })
+
+                if (response.ok) {
+                  const data = await response.json()
+                  if (data?.conflict) {
+                    const conflictMessage = attemptedProvider === 'google'
+                      ? 'This email is already registered. Please sign in using email.'
+                      : 'This account was created using Google. Please sign in with Google.'
+
+                    setAuthBlockingError(conflictMessage)
+                    setShowAuthModal(true)
+                  } else {
+                    setAuthBlockingError(null)
+                  }
+                }
+              } catch (error) {
+                console.warn('Provider consistency check failed:', error)
+              }
+            }
+            
+            // If user was trying to access My Bookings, redirect after login
+            if (redirectToBookingsAfterAuth) {
+              setRedirectToBookingsAfterAuth(false)
+              navigate('/my-bookings')
+            }
+            
+            // DO NOT reset chat - chat state is preserved from snapshot
+          }
+        } catch (error) {
+          console.warn('Failed to check mobile OAuth recovery:', error)
+        }
+      }
+    }
+
+    // Check on window focus (user switched back to tab)
+    const handleFocus = () => {
+      checkMobileOAuthRecovery()
+    }
+
+    // Check on visibility change (tab becomes visible)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        checkMobileOAuthRecovery()
+      }
+    }
+
+    window.addEventListener('focus', handleFocus)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.removeEventListener('focus', handleFocus)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [isSupabaseConfigured, redirectToBookingsAfterAuth, navigate, chatStarted, setMessages, setSessionId, setChatStarted])
+
+  // Clear chat snapshot on page refresh (STEP 3)
+  // Only clear if mobile OAuth is NOT in progress (user just refreshed, not returning from OAuth)
+  useEffect(() => {
+    const mobileOAuthPending = sessionStorage.getItem('mobile_oauth_pending')
+    if (!mobileOAuthPending) {
+      // No OAuth in progress - this is a fresh page load, clear snapshot
+      sessionStorage.removeItem('chat_snapshot')
+    }
+  }, []) // Run only on mount
 
   // Initialize auth state
   useEffect(() => {
@@ -214,14 +424,32 @@ export default function App() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
+      // CRITICAL: Ignore temporary SIGNED_OUT events during OAuth redirect
+      // Supabase fires SIGNED_OUT during OAuth redirect, but this is NOT a real logout
+      // Only treat SIGNED_OUT as logout when auth is NOT in progress (user-initiated logout)
+      // Use ref to avoid closure issues - ref always has current value
+      if (event === 'SIGNED_OUT' && isAuthInProgressRef.current) {
+        // Temporary SIGNED_OUT during OAuth - ignore it completely
+        // Do NOT update user state, do NOT log, do NOT reset chat
+        return
+      }
+      
       // CRITICAL: Only update user state - NEVER reset chat on auth changes
       // Chat state is independent of auth state and must be preserved during login/logout
       setUser(session?.user ?? null)
       enforceProviderConsistency(session)
       
-      // Reset auth-in-progress flag when auth completes (success or failure)
-      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
+      // Reset auth-in-progress flag when auth completes successfully
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
         setIsAuthInProgress(false)
+        isAuthInProgressRef.current = false
+      }
+      
+      // Only reset auth-in-progress on SIGNED_OUT if it was NOT during OAuth
+      // (Real user-initiated logout)
+      if (event === 'SIGNED_OUT' && !isAuthInProgressRef.current) {
+        setIsAuthInProgress(false)
+        isAuthInProgressRef.current = false
       }
       
       // Detect PASSWORD_RECOVERY event and open auth modal
@@ -234,7 +462,8 @@ export default function App() {
         // console.log('   Name:', session.user.user_metadata?.full_name || 'Not set')
         // console.log('   Email:', session.user.email || 'Not set')
         // console.log('   User ID:', session.user.id)
-      } else {
+      } else if (event === 'SIGNED_OUT' && !isAuthInProgressRef.current) {
+        // Only log logout if it's a real logout (not during OAuth)
         console.log('👤 User logged out')
       }
       
@@ -310,6 +539,7 @@ export default function App() {
           
           // Reset auth-in-progress flag
           setIsAuthInProgress(false)
+          isAuthInProgressRef.current = false
           
           // If user just logged in and there's a pending booking, retry it
           if (session?.user && pendingBookingSessionId) {
@@ -395,6 +625,7 @@ export default function App() {
             
             // Reset auth-in-progress flag
             setIsAuthInProgress(false)
+            isAuthInProgressRef.current = false
             
             // If user just logged in and there's a pending booking, retry it
             if (session?.user && pendingBookingSessionId) {
@@ -414,6 +645,7 @@ export default function App() {
           // Auth token was deleted (logout in another tab)
           setUser(null)
           setIsAuthInProgress(false)
+          isAuthInProgressRef.current = false
         }
       }
     }
@@ -440,6 +672,9 @@ export default function App() {
 
   const handleStartChat = (initialMessage = null) => {
     navigate('/chat')
+    
+    // Clear chat snapshot on new session (STEP 3)
+    sessionStorage.removeItem('chat_snapshot')
     
     // If initialMessage provided, store it to send as first message
     if (initialMessage) {
@@ -490,6 +725,8 @@ export default function App() {
     // This ensures logout UX works even if signOut returned 403
     setUser(null)
     resetSession()
+    // Clear chat snapshot on logout (STEP 3)
+    sessionStorage.removeItem('chat_snapshot')
     navigate('/', { replace: true })
   }
 
@@ -971,9 +1208,17 @@ export default function App() {
             onClose={handleAuthClose}
             onSuccess={handleAuthSuccess}
             externalError={authBlockingError}
-            onAuthStart={() => setIsAuthInProgress(true)}
-            onAuthEnd={() => setIsAuthInProgress(false)}
+            onAuthStart={() => {
+              setIsAuthInProgress(true)
+              isAuthInProgressRef.current = true
+            }}
+            onAuthEnd={() => {
+              setIsAuthInProgress(false)
+              isAuthInProgressRef.current = false
+            }}
             user={user}
+            messages={messages}
+            sessionId={sessionId}
           />
         </>
       )
@@ -1026,6 +1271,8 @@ export default function App() {
           onAuthStart={() => setIsAuthInProgress(true)}
           onAuthEnd={() => setIsAuthInProgress(false)}
           user={user}
+          messages={messages}
+          sessionId={sessionId}
         />
       </>
     )
@@ -1430,9 +1677,17 @@ export default function App() {
             onClose={handleAuthClose}
             onSuccess={handleAuthSuccess}
             externalError={authBlockingError}
-            onAuthStart={() => setIsAuthInProgress(true)}
-            onAuthEnd={() => setIsAuthInProgress(false)}
+            onAuthStart={() => {
+              setIsAuthInProgress(true)
+              isAuthInProgressRef.current = true
+            }}
+            onAuthEnd={() => {
+              setIsAuthInProgress(false)
+              isAuthInProgressRef.current = false
+            }}
             user={user}
+            messages={messages}
+            sessionId={sessionId}
           />
 
           <PhotoGalleryModal
@@ -1916,6 +2171,8 @@ export default function App() {
         onSuccess={handleAuthSuccess}
         externalError={authBlockingError}
         user={user}
+        messages={messages}
+        sessionId={sessionId}
       />
 
       {/* Photo Gallery Modal */}

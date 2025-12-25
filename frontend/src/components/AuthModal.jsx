@@ -30,7 +30,7 @@ async function checkProviderConflict(email, attemptedProvider) {
   }
 }
 
-export default function AuthModal({ isOpen, onClose, onSuccess, externalError, onAuthStart, onAuthEnd, user }) {
+export default function AuthModal({ isOpen, onClose, onSuccess, externalError, onAuthStart, onAuthEnd, user, messages, sessionId }) {
   const location = useLocation()
   // Unified modal state: 'login' | 'signup' | 'forgot_password' | 'reset_password' | 'reset_success'
   const [modalState, setModalState] = useState('login')
@@ -42,6 +42,17 @@ export default function AuthModal({ isOpen, onClose, onSuccess, externalError, o
   const [phone, setPhone] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [isMobile, setIsMobile] = useState(false)
+
+  // Mobile detection
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768)
+    }
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
 
   // Auto-close modal when user becomes authenticated
   // This handles successful login via OAuth popup, new tab, or email
@@ -189,15 +200,65 @@ export default function AuthModal({ isOpen, onClose, onSuccess, externalError, o
     }
 
     try {
-      // Redirect to callback page that will handle postMessage and auto-close
-      const redirectTo = `${window.location.origin}/auth/callback`
-      
       // Get Supabase URL from environment
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
       if (!supabaseUrl) {
         throw new Error('Supabase URL not configured')
       }
 
+      // MOBILE: Open OAuth in NEW TAB (preserves current tab and chat)
+      if (isMobile) {
+        // CRITICAL: Set isAuthInProgress BEFORE opening new tab
+        if (onAuthStart) {
+          onAuthStart()
+        }
+        
+        // STEP 1: Save chat snapshot to sessionStorage (temporary persistence during auth)
+        // This allows chat to be restored when user returns from OAuth
+        if (messages && messages.length > 0) {
+          const chatSnapshot = {
+            messages: messages,
+            sessionId: sessionId || null,
+            timestamp: Date.now()
+          }
+          sessionStorage.setItem('chat_snapshot', JSON.stringify(chatSnapshot))
+        }
+        
+        // STEP 2: Set flag to detect auth completion when user returns
+        sessionStorage.setItem('mobile_oauth_pending', '1')
+        
+        // STEP 3: Construct OAuth URL (redirects to HOME after login)
+        const redirectTo = `${window.location.origin}/`
+        const oauthUrl = `${supabaseUrl}/auth/v1/authorize?provider=${provider}&redirect_to=${encodeURIComponent(redirectTo)}`
+        
+        // STEP 4: Open OAuth in NEW TAB (preserves current tab)
+        // Do NOT use window.location.href - that would replace current tab
+        const newTab = window.open(oauthUrl, '_blank')
+        
+        if (!newTab) {
+          // New tab blocked - show error
+          setError('Please allow pop-ups to sign in with Google, or try again.')
+          setLoading(false)
+          // Clear snapshot if tab was blocked
+          sessionStorage.removeItem('chat_snapshot')
+          if (onAuthEnd) {
+            onAuthEnd()
+          }
+          return
+        }
+        
+        // Reset loading state immediately (user interaction is done)
+        setLoading(false)
+        
+        // Note: Global recovery in App.jsx will detect login when user returns to tab
+        // Chat will be restored from sessionStorage.chat_snapshot
+        return
+      }
+
+      // DESKTOP: Use popup flow (works reliably on desktop)
+      // Redirect to callback page that will handle postMessage and auto-close
+      const redirectTo = `${window.location.origin}/auth/callback`
+      
       // Construct OAuth URL with callback redirect
       // Format: https://<project>.supabase.co/auth/v1/authorize?provider=google&redirect_to=<encoded_url>
       const oauthUrl = `${supabaseUrl}/auth/v1/authorize?provider=${provider}&redirect_to=${encodeURIComponent(redirectTo)}`

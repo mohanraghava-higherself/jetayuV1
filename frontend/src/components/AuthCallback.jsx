@@ -8,36 +8,38 @@ export default function AuthCallback() {
       // Supabase automatically processes hash fragments on page load
       try {
         // Get session to ensure auth state is processed
-        const { data: { session } } = await supabase.auth.getSession()
+        await supabase.auth.getSession()
         
         // Small delay to ensure Supabase has processed the tokens
         await new Promise(resolve => setTimeout(resolve, 100))
         
-        // Notify opener that login succeeded
+        // MOBILE: Cannot rely on window.opener or postMessage
+        // Desktop: Try to notify opener, but always redirect as fallback
         if (window.opener) {
-          window.opener.postMessage({ type: 'AUTH_SUCCESS' }, window.location.origin)
-          // Close popup immediately
-          window.close()
+          try {
+            window.opener.postMessage({ type: 'AUTH_SUCCESS' }, window.location.origin)
+            // Try to close popup (works on desktop)
+            window.close()
+            // If close fails, redirect will happen below
+          } catch (err) {
+            // postMessage failed - redirect instead
+            window.location.href = '/'
+          }
         } else {
-          // If no opener (direct navigation), redirect to home
+          // No opener (mobile or direct navigation) - always redirect to HOME
           window.location.href = '/'
         }
       } catch (error) {
         console.error('Auth callback error:', error)
-        // Still try to close/redirect even on error
-        if (window.opener) {
-          window.opener.postMessage({ type: 'AUTH_SUCCESS' }, window.location.origin)
-          window.close()
-        } else {
-          window.location.href = '/'
-        }
+        // Always redirect to HOME on error
+        window.location.href = '/'
       }
     }
 
     handleCallback()
   }, [])
 
-  // Minimal UI - should close before user sees it
+  // Minimal UI - should redirect before user sees it
   return (
     <div style={{
       display: 'flex',
