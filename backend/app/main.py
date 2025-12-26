@@ -14,18 +14,20 @@ app = FastAPI(
 @app.on_event("startup")
 async def startup_event():
     """Run startup checks including Resend API test."""
+    import logging
     from app.services.email_service import test_resend_connection, get_email_service
     
-    print("\n" + "="*60)
-    print("🔍 Testing Resend API connection...")
-    print("="*60)
+    logger = logging.getLogger(__name__)
+    logger.info("="*60)
+    logger.info("Testing Resend API connection...")
+    logger.info("="*60)
     
     # Initialize EmailService to trigger API key verification logging
     email_service = get_email_service()
     
     # Run connection test
     test_resend_connection()
-    print("="*60 + "\n")
+    logger.info("="*60)
 
 # CORS middleware
 app.add_middleware(

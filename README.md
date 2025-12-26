@@ -78,12 +78,9 @@ SUPABASE_KEY=your-supabase-anon-key
 SUPABASE_JWT_SECRET=your-supabase-jwt-secret
 OPENAI_API_KEY=your-openai-api-key
 
-# Optional: Email notifications for booking confirmations
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your-email@gmail.com
-SMTP_PASSWORD=your-app-password
-FROM_EMAIL=concierge@jetayu.com
+# Optional: Email notifications for booking confirmations (using Resend API)
+RESEND_API_KEY=re_your-resend-api-key
+FROM_EMAIL=onboarding@resend.dev  # Use verified domain in production (e.g., concierge@flyjetayu.com)
 OPERATOR_EMAILS=operator1@yourcompany.com,operator2@yourcompany.com
 ```
 
@@ -350,7 +347,7 @@ Modify `frontend/tailwind.config.js` colors and `frontend/src/index.css` for sty
 - **Aircraft Flow:** Jet suggestions appear after pax is captured OR when user asks about aircraft
 - **Booking Flow:** When user says "go ahead", "book it", etc., lead status changes to "confirmed" and operators are notified
 - **Auth Flow:** Authentication is optional for chat, required only for booking confirmation
-- **Email:** If SMTP not configured, booking notifications are logged to console
+- **Email:** Uses Resend API for booking notifications. If not configured, notifications are logged to console
 - **Session Persistence:** Session data persists in Supabase across page refreshes (if same session_id used)
 - **OAuth Setup:** Configure Google and Apple OAuth in Supabase Dashboard > Authentication > Providers
 

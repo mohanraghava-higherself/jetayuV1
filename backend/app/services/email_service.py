@@ -7,10 +7,13 @@ Runs in background with automatic retries.
 
 import httpx
 import threading
-from typing import List, Optional
+import logging
+from typing import List, Optional, Set
 from datetime import datetime
 from app.config import settings
 from app.models.schemas import LeadState
+
+logger = logging.getLogger(__name__)
 
 
 class EmailService:
@@ -29,15 +32,19 @@ class EmailService:
         self.from_email = settings.FROM_EMAIL
         self.operator_emails = settings.OPERATOR_EMAILS
         
+        # Idempotency tracking: prevent duplicate emails for same booking
+        self._sent_emails: Set[str] = set()
+        self._sent_emails_lock = threading.Lock()
+        
         # CRITICAL: Verify API key is loaded correctly
         import os
         raw_key = os.getenv("RESEND_API_KEY", "")
         if raw_key:
-            print(f"✅ RESEND_API_KEY loaded: {raw_key[:10]}...{raw_key[-4:] if len(raw_key) > 14 else '***'} (length: {len(raw_key)})")
+            logger.info(f"RESEND_API_KEY loaded: {raw_key[:10]}...{raw_key[-4:] if len(raw_key) > 14 else '***'} (length: {len(raw_key)})")
             if not raw_key.startswith("re_"):
-                print("⚠️  WARNING: RESEND_API_KEY should start with 're_'")
+                logger.warning("RESEND_API_KEY should start with 're_'")
         else:
-            print("❌ RESEND_API_KEY is missing or empty!")
+            logger.error("RESEND_API_KEY is missing or empty!")
         
         # Check if email is configured
         self._configured = all([
@@ -47,17 +54,20 @@ class EmailService:
         ])
         
         if not self._configured:
-            print("⚠️  Email service not configured - notifications will be logged only")
+            logger.warning("Email service not configured - notifications will be logged only")
             if not self.resend_api_key:
-                print("   Missing RESEND_API_KEY environment variable")
+                logger.warning("Missing RESEND_API_KEY environment variable")
             if not self.operator_emails:
-                print("   Missing OPERATOR_EMAILS environment variable")
+                logger.warning("Missing OPERATOR_EMAILS environment variable")
         
-        # Ensure FROM_EMAIL uses Resend's default domain for unverified accounts
-        if self.from_email and "resend.dev" not in self.from_email:
-            print(f"⚠️  FROM_EMAIL is set to '{self.from_email}' - ensure this domain is verified in Resend")
-            print("   Using 'onboarding@resend.dev' for unverified domains")
-            # Don't override, but warn - user should verify their domain
+        # Validate FROM_EMAIL domain
+        if self.from_email:
+            if "resend.dev" in self.from_email:
+                logger.info(f"Using Resend default domain: {self.from_email}")
+            elif "flyjetayu.com" in self.from_email:
+                logger.info(f"Using production domain: {self.from_email} (ensure domain is verified in Resend)")
+            else:
+                logger.warning(f"FROM_EMAIL is set to '{self.from_email}' - ensure this domain is verified in Resend")
     
     def send_booking_notification_background(
         self,
@@ -69,15 +79,25 @@ class EmailService:
         """
         Queue booking notification to be sent in background.
         This returns immediately and sends email asynchronously.
+        Implements idempotency: same session_id won't send duplicate emails.
         """
+        # Idempotency check: prevent duplicate emails for same booking
+        with self._sent_emails_lock:
+            if session_id in self._sent_emails:
+                logger.info(f"Email already sent for session {session_id}, skipping duplicate")
+                return
+            # Mark as queued immediately to prevent race conditions
+            self._sent_emails.add(session_id)
+        
         # Create a thread to handle the email sending with retries
+        # Use non-daemon thread so emails complete even if main process shuts down
         thread = threading.Thread(
             target=self._send_with_retries,
             args=(lead, session_id, selected_aircraft, conversation_summary),
-            daemon=True  # Thread dies when main process dies
+            daemon=False  # Non-daemon: thread completes even if main process exits
         )
         thread.start()
-        print(f"📧 Email notification queued for background sending...")
+        logger.info(f"Email notification queued for background sending (session_id={session_id})")
     
     def _send_with_retries(
         self,
@@ -102,14 +122,16 @@ class EmailService:
         
         if not self._configured:
             # Log the notification instead
-            print("\n" + "="*60)
-            print("📧 BOOKING NOTIFICATION (Email not configured)")
-            print("="*60)
-            print(text_content)
-            print("="*60 + "\n")
+            logger.info("BOOKING NOTIFICATION (Email not configured)", extra={
+                "session_id": session_id,
+                "client_name": lead.name,
+                "route": f"{lead.route_from} → {lead.route_to}"
+            })
+            logger.debug(f"Email content (not sent): {text_content}")
             return
         
         # Send to each operator with retries
+        all_success = True
         for operator_email in self.operator_emails:
             success = False
             last_error = None
@@ -122,18 +144,40 @@ class EmailService:
                         html_content=html_content,
                         text_content=text_content
                     )
-                    print(f"✅ Booking notification sent to {operator_email} (Resend ID: {response_id})")
+                    logger.info("Booking notification sent successfully", extra={
+                        "session_id": session_id,
+                        "recipient": operator_email,
+                        "resend_id": response_id,
+                        "attempt": attempt + 1
+                    })
                     success = True
                     break
                 except Exception as e:
                     last_error = e
                     if attempt < self.MAX_RETRIES - 1:
                         delay = self.RETRY_DELAYS[attempt]
-                        print(f"⚠️  Email to {operator_email} failed (attempt {attempt + 1}/{self.MAX_RETRIES}): {e}")
-                        print(f"   Retrying in {delay}s...")
+                        logger.warning(f"Email send failed, retrying", extra={
+                            "session_id": session_id,
+                            "recipient": operator_email,
+                            "attempt": attempt + 1,
+                            "max_retries": self.MAX_RETRIES,
+                            "retry_delay": delay,
+                            "error": str(e)
+                        })
                         time.sleep(delay)
                     else:
-                        print(f"❌ Email to {operator_email} failed after {self.MAX_RETRIES} attempts: {last_error}")
+                        logger.error("Email send failed after all retries", extra={
+                            "session_id": session_id,
+                            "recipient": operator_email,
+                            "attempts": self.MAX_RETRIES,
+                            "error": str(last_error)
+                        })
+                        all_success = False
+        
+        if not all_success:
+            # If all recipients failed, remove from sent set to allow retry
+            with self._sent_emails_lock:
+                self._sent_emails.discard(session_id)
     
     def send_booking_notification(
         self,
@@ -156,11 +200,12 @@ class EmailService:
         )
         
         if not self._configured:
-            print("\n" + "="*60)
-            print("📧 BOOKING NOTIFICATION (Email not configured)")
-            print("="*60)
-            print(text_content)
-            print("="*60 + "\n")
+            logger.info("BOOKING NOTIFICATION (Email not configured)", extra={
+                "session_id": session_id,
+                "client_name": lead.name,
+                "route": f"{lead.route_from} → {lead.route_to}"
+            })
+            logger.debug(f"Email content (not sent): {text_content}")
             return True
         
         success = True
@@ -172,9 +217,17 @@ class EmailService:
                     html_content=html_content,
                     text_content=text_content
                 )
-                print(f"✅ Booking notification sent to {operator_email} (Resend ID: {response_id})")
+                logger.info("Booking notification sent successfully", extra={
+                    "session_id": session_id,
+                    "recipient": operator_email,
+                    "resend_id": response_id
+                })
             except Exception as e:
-                print(f"❌ Failed to send to {operator_email}: {e}")
+                logger.error("Failed to send booking notification", extra={
+                    "session_id": session_id,
+                    "recipient": operator_email,
+                    "error": str(e)
+                })
                 success = False
         
         return success
@@ -194,14 +247,14 @@ class EmailService:
         if not self.resend_api_key:
             raise ValueError("RESEND_API_KEY is not configured")
         
-        # CRITICAL: Use exact sender format for Resend
+        # Format sender email for Resend API
         # For onboarding@resend.dev (default), use just the email
-        # For verified domains, can use "Name <email@domain.com>" format
+        # For verified domains (e.g., flyjetayu.com), use "Name <email@domain.com>" format
         if "resend.dev" in self.from_email:
             # Use simple email format for Resend's default domain
             from_email_formatted = self.from_email
         else:
-            # For custom verified domains, use formatted name
+            # For custom verified domains (including flyjetayu.com), use formatted name
             from_email_formatted = f"Jetayu <{self.from_email}>"
         
         # Prepare request payload
@@ -235,11 +288,13 @@ class EmailService:
                     except:
                         error_body = "Could not read error response"
                     
-                    print(f"❌ Resend API Error {response.status_code}:")
-                    print(f"   URL: {self.RESEND_API_URL}")
-                    print(f"   From: {from_email_formatted}")
-                    print(f"   To: {to_email}")
-                    print(f"   Response: {error_body}")
+                    logger.error("Resend API error", extra={
+                        "status_code": response.status_code,
+                        "url": self.RESEND_API_URL,
+                        "from": from_email_formatted,
+                        "to": to_email,
+                        "error_response": error_body
+                    })
                     
                     # Raise with detailed error
                     response.raise_for_status()
@@ -258,8 +313,12 @@ class EmailService:
                 except:
                     pass
             
-            print(f"❌ Resend HTTP Error {e.response.status_code}:")
-            print(f"   Response body: {error_body}")
+            logger.error("Resend HTTP error", extra={
+                "status_code": e.response.status_code,
+                "error_response": error_body,
+                "from": from_email_formatted,
+                "to": to_email
+            })
             raise
     
     def _build_booking_email_html(
@@ -420,12 +479,11 @@ def test_resend_connection():
     api_key = os.getenv("RESEND_API_KEY", "")
     
     if not api_key:
-        print("⚠️  Skipping Resend test - RESEND_API_KEY not set")
+        logger.warning("Skipping Resend test - RESEND_API_KEY not set")
         return False
     
     if not api_key.startswith("re_"):
-        print("⚠️  Skipping Resend test - API key format invalid (should start with 're_')")
-        print(f"   Got: {api_key[:20]}...")
+        logger.warning(f"Skipping Resend test - API key format invalid (should start with 're_'), got: {api_key[:20]}...")
         return False
     
     # Get test recipient from env or use a default
@@ -446,7 +504,7 @@ def test_resend_connection():
             "Content-Type": "application/json",
         }
         
-        print(f"   Testing with: from=onboarding@resend.dev, to={test_recipient}")
+        logger.info(f"Testing Resend API connection: from=onboarding@resend.dev, to={test_recipient}")
         
         with httpx.Client(timeout=10.0) as client:
             response = client.post(
@@ -457,25 +515,22 @@ def test_resend_connection():
             
             if response.status_code in [200, 201, 202]:
                 response_data = response.json()
-                print(f"✅ Resend API test successful! Response ID: {response_data.get('id', 'unknown')}")
+                resend_id = response_data.get('id', 'unknown')
+                logger.info(f"Resend API test successful", extra={"resend_id": resend_id})
                 return True
             else:
-                print(f"❌ Resend API test failed: HTTP {response.status_code}")
-                try:
-                    error_data = response.json()
-                    print(f"   Error details: {error_data}")
-                except:
-                    print(f"   Response body: {response.text[:200]}")
+                logger.error("Resend API test failed", extra={
+                    "status_code": response.status_code,
+                    "error_response": response.text[:200] if hasattr(response, 'text') else "N/A"
+                })
                 return False
                 
     except httpx.HTTPStatusError as e:
-        print(f"❌ Resend API test HTTP error: {e.response.status_code}")
-        try:
-            error_data = e.response.json()
-            print(f"   Error details: {error_data}")
-        except:
-            print(f"   Response body: {e.response.text[:200]}")
+        logger.error("Resend API test HTTP error", extra={
+            "status_code": e.response.status_code,
+            "error_response": e.response.text[:200] if hasattr(e.response, 'text') else "N/A"
+        })
         return False
     except Exception as e:
-        print(f"❌ Resend API test error: {type(e).__name__}: {e}")
+        logger.error("Resend API test error", extra={"error_type": type(e).__name__, "error": str(e)})
         return False
